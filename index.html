@@ -3,30 +3,40 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>PL + EFL Fixtures</title>
+  <title>Premier League + EFL Fixtures</title>
   <style>
     :root { --bg:#0b0f14; --card:#121a23; --text:#e7eef7; --muted:#9fb0c3; --line:#223040; --accent:#4aa3ff; }
     *{box-sizing:border-box}
     body{margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial;background:var(--bg);color:var(--text)}
-    header{position:sticky;top:0;background:rgba(11,15,20,.92);backdrop-filter:blur(8px);border-bottom:1px solid var(--line)}
-    .wrap{max-width:1000px;margin:0 auto;padding:16px}
+    header{position:sticky;top:0;background:rgba(11,15,20,.92);backdrop-filter:blur(8px);border-bottom:1px solid var(--line);z-index:10}
+    .wrap{max-width:1100px;margin:0 auto;padding:16px}
     h1{margin:0;font-size:18px}
     .sub{color:var(--muted);font-size:13px;margin-top:6px}
     .bar{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-top:12px}
-    select,button{background:var(--card);color:var(--text);border:1px solid var(--line);border-radius:10px;padding:10px 12px;font-size:14px}
+    select,button,input,label{
+      background:var(--card);color:var(--text);
+      border:1px solid var(--line);border-radius:10px;
+      padding:10px 12px;font-size:14px;outline:none
+    }
+    input{min-width:170px}
     button{cursor:pointer;border-color:rgba(74,163,255,.45)}
     button:hover{background:rgba(74,163,255,.08)}
     .pill{font-size:12px;color:var(--muted);border:1px solid var(--line);padding:2px 8px;border-radius:999px}
     .card{background:var(--card);border:1px solid var(--line);border-radius:14px;overflow:hidden}
     .head{padding:12px 14px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;align-items:center}
     table{width:100%;border-collapse:collapse}
-    th,td{padding:10px 12px;border-bottom:1px solid var(--line);vertical-align:top}
+    th,td{padding:10px 12px;border-bottom:1px solid var(--line);vertical-align:middle}
     th{font-size:12px;color:var(--muted);text-align:left}
     tr:hover td{background:rgba(255,255,255,.02)}
     .teams{font-weight:650}
     .meta{font-size:12px;color:var(--muted);margin-top:2px}
-    a{color:var(--accent);text-decoration:none}
-    a:hover{text-decoration:underline}
+    .statusTag{display:inline-block;margin-top:6px;font-size:11px;padding:2px 8px;border-radius:999px;border:1px solid var(--line);color:var(--muted)}
+    .live{color:#ffb0b0;border-color:rgba(255,176,176,.35)}
+    .ft{color:#bfe3c6;border-color:rgba(191,227,198,.35)}
+    .crest{width:18px;height:18px;vertical-align:-3px;margin-right:8px;border-radius:3px}
+    .rowMatch{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+    .right{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+    .small{font-size:12px;color:var(--muted)}
   </style>
 </head>
 <body>
@@ -41,13 +51,49 @@
         <option value="ELC">EFL Championship</option>
       </select>
 
-      <select id="status">
-        <option value="SCHEDULED" selected>Upcoming</option>
-        <option value="FINISHED">Results</option>
+      <!-- New: view filter -->
+      <select id="view">
+        <option value="upcoming" selected>Upcoming</option>
+        <option value="live">Live now</option>
+        <option value="finished">Finished</option>
+        <option value="all">All</option>
       </select>
+
+      <!-- New: date filter -->
+      <select id="range">
+        <option value="all" selected>All dates</option>
+        <option value="today">Today</option>
+        <option value="tomorrow">Tomorrow</option>
+        <option value="7d">Next 7 days</option>
+      </select>
+
+      <!-- New: search -->
+      <input id="q" placeholder="Search team…" />
+
+      <!-- New: matchday filter -->
+      <input id="matchday" type="number" min="1" placeholder="Matchday (optional)" style="width:170px;"/>
 
       <button id="load">Load</button>
       <span id="state" class="pill">Ready</span>
+
+      <div class="right">
+        <!-- New: auto refresh -->
+        <label class="small" style="display:flex;align-items:center;gap:8px;">
+          <input id="auto" type="checkbox" style="min-width:auto;margin:0;" />
+          Auto refresh
+        </label>
+        <select id="every" style="min-width:140px;">
+          <option value="30">30s</option>
+          <option value="60" selected>60s</option>
+          <option value="300">5 min</option>
+        </select>
+
+        <!-- New: show crests -->
+        <label class="small" style="display:flex;align-items:center;gap:8px;">
+          <input id="crests" type="checkbox" checked style="min-width:auto;margin:0;" />
+          Team crests
+        </label>
+      </div>
     </div>
   </div>
 </header>
@@ -62,7 +108,7 @@
     <table>
       <thead>
         <tr>
-          <th style="width:230px;">Date / Time (UK)</th>
+          <th style="width:250px;">Date / Time (UK)</th>
           <th>Match</th>
           <th style="width:110px;">Matchday</th>
         </tr>
@@ -75,16 +121,24 @@
 </div>
 
 <script>
-  // ✅ THIS is “Part 2” — your page calls your Worker, not football-data directly
+  // Your Worker endpoint
   const WORKER_API = "https://api.techapex.co.uk";
 
   const compSel = document.getElementById("comp");
-  const statusSel = document.getElementById("status");
+  const viewSel = document.getElementById("view");
+  const rangeSel = document.getElementById("range");
+  const qInp = document.getElementById("q");
+  const mdInp = document.getElementById("matchday");
   const btn = document.getElementById("load");
   const state = document.getElementById("state");
   const title = document.getElementById("title");
   const count = document.getElementById("count");
   const rows = document.getElementById("rows");
+  const autoChk = document.getElementById("auto");
+  const everySel = document.getElementById("every");
+  const crestsChk = document.getElementById("crests");
+
+  let timer = null;
 
   function setState(t){ state.textContent = t; }
 
@@ -100,8 +154,52 @@
     }).format(new Date(utcIso));
   }
 
-  async function fetchViaWorker(targetUrl){
-    const proxied = `${WORKER_API}/?url=${encodeURIComponent(targetUrl)}`;
+  function ymd(d){
+    const y = d.getFullYear();
+    const m = String(d.getMonth()+1).padStart(2,'0');
+    const dd = String(d.getDate()).padStart(2,'0');
+    return `${y}-${m}-${dd}`;
+  }
+
+  function getDateRangeParam(){
+    const now = new Date();
+    const r = rangeSel.value;
+
+    if (r === "today") {
+      return { dateFrom: ymd(now), dateTo: ymd(now) };
+    }
+    if (r === "tomorrow") {
+      const t = new Date(now); t.setDate(t.getDate()+1);
+      return { dateFrom: ymd(t), dateTo: ymd(t) };
+    }
+    if (r === "7d") {
+      const to = new Date(now); to.setDate(to.getDate()+7);
+      return { dateFrom: ymd(now), dateTo: ymd(to) };
+    }
+    return null; // all
+  }
+
+  // Build a football-data URL and call it through your Worker
+  async function fetchMatches(){
+    const code = compSel.value;
+    const view = viewSel.value;
+
+    // Use API status filter if possible (comma separated). If it doesn’t filter, we also filter client-side.
+    let statusParam = "";
+    if (view === "upcoming") statusParam = "SCHEDULED,TIMED";
+    else if (view === "live") statusParam = "IN_PLAY,PAUSED";
+    else if (view === "finished") statusParam = "FINISHED";
+    else statusParam = ""; // all
+
+    const range = getDateRangeParam();
+    const qs = new URLSearchParams();
+
+    if (statusParam) qs.set("status", statusParam);
+    if (range) { qs.set("dateFrom", range.dateFrom); qs.set("dateTo", range.dateTo); }
+
+    const target = `https://api.football-data.org/v4/competitions/${code}/matches` + (qs.toString() ? `?${qs}` : "");
+    const proxied = `${WORKER_API}/?url=${encodeURIComponent(target)}`;
+
     const res = await fetch(proxied);
     const text = await res.text();
 
@@ -113,58 +211,24 @@
     return data;
   }
 
+  function statusClass(st){
+    if (st === "IN_PLAY" || st === "PAUSED") return "statusTag live";
+    if (st === "FINISHED") return "statusTag ft";
+    return "statusTag";
+  }
+
   function render(matches){
-    if (!Array.isArray(matches) || matches.length === 0){
-      rows.innerHTML = `<tr><td colspan="3" class="meta">No matches returned for this filter.</td></tr>`;
-      count.textContent = "0 matches";
-      return;
-    }
+    const q = (qInp.value || "").trim().toLowerCase();
+    const md = (mdInp.value || "").trim();
 
-    matches.sort((a,b)=> new Date(a.utcDate) - new Date(b.utcDate));
-    count.textContent = `${matches.length} match${matches.length===1?"":"es"}`;
+    // Client-side filters (works even if upstream doesn’t honor multi-status)
+    let list = Array.isArray(matches) ? matches.slice() : [];
 
-    rows.innerHTML = matches.map(m=>{
-      const when = ukTime(m.utcDate);
-      const home = m.homeTeam?.name || "—";
-      const away = m.awayTeam?.name || "—";
-      const md = (m.matchday ?? "—");
-      return `
-        <tr>
-          <td><div class="teams">${when}</div><div class="meta">${m.status}</div></td>
-          <td><div class="teams">${home} vs ${away}</div></td>
-          <td><div class="teams">${md}</div></td>
-        </tr>
-      `;
-    }).join("");
-  }
+    // View filter (client-side safety)
+    const v = viewSel.value;
+    if (v === "upcoming") list = list.filter(m => ["SCHEDULED","TIMED"].includes(m.status));
+    if (v === "live") list = list.filter(m => ["IN_PLAY","PAUSED"].includes(m.status));
+    if (v === "finished") list = list.filter(m => ["FINISHED"].includes(m.status));
 
-  async function load(){
-    const code = compSel.value;
-    const st = statusSel.value;
-
-    setState("Loading…");
-    rows.innerHTML = `<tr><td colspan="3" class="meta">Loading…</td></tr>`;
-
-    try{
-      const url = `https://api.football-data.org/v4/competitions/${code}/matches?status=${encodeURIComponent(st)}`;
-      const data = await fetchViaWorker(url);
-      title.textContent = `${data.competition?.name || code} (${code})`;
-      render(data.matches);
-      setState("Updated");
-    }catch(e){
-      title.textContent = code;
-      rows.innerHTML = `<tr><td colspan="3" class="meta">Error: ${String(e.message || e)}</td></tr>`;
-      setState("Error");
-      console.error(e);
-    }
-  }
-
-  btn.addEventListener("click", load);
-  compSel.addEventListener("change", load);
-  statusSel.addEventListener("change", load);
-
-  // auto-load
-  load();
-</script>
-</body>
-</html>
+    // Matchday filter
+    if (md) list = l
