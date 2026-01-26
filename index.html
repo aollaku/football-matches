@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Premier League + EFL Fixtures</title>
+  <title>PL + EFL Fixtures</title>
   <style>
     :root { --bg:#0b0f14; --card:#121a23; --text:#e7eef7; --muted:#9fb0c3; --line:#223040; --accent:#4aa3ff; }
     *{box-sizing:border-box}
@@ -33,22 +33,21 @@
 <header>
   <div class="wrap">
     <h1>Premier League + EFL Fixtures</h1>
-    <div class="sub">GitHub Pages frontend • Cloudflare Worker proxy • data from football-data.org (free PL + Championship)</div>
+    <div class="sub">Frontend: GitHub Pages • Data: football-data.org via your Cloudflare Worker</div>
+
     <div class="bar">
       <select id="comp">
         <option value="PL">Premier League</option>
         <option value="ELC">EFL Championship</option>
-        <option value="EL1">EFL League One (may require higher tier)</option>
-        <option value="EL2">EFL League Two (may require higher tier)</option>
       </select>
 
-      <select id="which">
+      <select id="status">
         <option value="SCHEDULED" selected>Upcoming</option>
         <option value="FINISHED">Results</option>
       </select>
 
       <button id="load">Load</button>
-      <span id="status" class="pill">Ready</span>
+      <span id="state" class="pill">Ready</span>
     </div>
   </div>
 </header>
@@ -59,12 +58,13 @@
       <div id="title" class="teams">—</div>
       <div id="count" class="meta">0 matches</div>
     </div>
+
     <table>
       <thead>
         <tr>
-          <th style="width:220px;">Date / Time (UK)</th>
+          <th style="width:230px;">Date / Time (UK)</th>
           <th>Match</th>
-          <th style="width:120px;">Matchday</th>
+          <th style="width:110px;">Matchday</th>
         </tr>
       </thead>
       <tbody id="rows">
@@ -72,43 +72,42 @@
       </tbody>
     </table>
   </div>
-
-  <div class="meta" style="margin-top:12px;">
-    If EL1/EL2 returns an error, that’s coverage/tier (PL + Championship are in the free tier). :contentReference[oaicite:1]{index=1}
-  </div>
 </div>
 
 <script>
-  // ✅ set this to your Cloudflare Worker URL (no trailing slash)
-  const WORKER_BASE = "https://YOUR-WORKER.your-subdomain.workers.dev";
+  // ✅ THIS is “Part 2” — your page calls your Worker, not football-data directly
+  const WORKER_API = "https://api.techapex.co.uk";
 
   const compSel = document.getElementById("comp");
-  const whichSel = document.getElementById("which");
+  const statusSel = document.getElementById("status");
   const btn = document.getElementById("load");
-  const statusEl = document.getElementById("status");
-  const titleEl = document.getElementById("title");
-  const countEl = document.getElementById("count");
-  const rowsEl = document.getElementById("rows");
+  const state = document.getElementById("state");
+  const title = document.getElementById("title");
+  const count = document.getElementById("count");
+  const rows = document.getElementById("rows");
 
-  function setStatus(t){ statusEl.textContent = t; }
+  function setState(t){ state.textContent = t; }
 
   function ukTime(utcIso){
-    const d = new Date(utcIso);
     return new Intl.DateTimeFormat("en-GB", {
       timeZone: "Europe/London",
-      weekday: "short", year: "numeric", month: "short", day: "2-digit",
-      hour: "2-digit", minute: "2-digit"
-    }).format(d);
+      weekday: "short",
+      year: "numeric",
+      month: "short",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit"
+    }).format(new Date(utcIso));
   }
 
   async function fetchViaWorker(targetUrl){
-    const proxied = `${WORKER_BASE}?url=${encodeURIComponent(targetUrl)}`;
-    const res = await fetch(proxied, { method: "GET" });
+    const proxied = `${WORKER_API}/?url=${encodeURIComponent(targetUrl)}`;
+    const res = await fetch(proxied);
     const text = await res.text();
 
     let data;
     try { data = JSON.parse(text); }
-    catch { throw new Error("Bad JSON from worker: " + text.slice(0,120)); }
+    catch { throw new Error("Bad JSON: " + text.slice(0,120)); }
 
     if (!res.ok) throw new Error(data?.message || data?.error || `HTTP ${res.status}`);
     return data;
@@ -116,29 +115,23 @@
 
   function render(matches){
     if (!Array.isArray(matches) || matches.length === 0){
-      rowsEl.innerHTML = `<tr><td colspan="3" class="meta">No matches returned for this filter.</td></tr>`;
-      countEl.textContent = "0 matches";
+      rows.innerHTML = `<tr><td colspan="3" class="meta">No matches returned for this filter.</td></tr>`;
+      count.textContent = "0 matches";
       return;
     }
 
     matches.sort((a,b)=> new Date(a.utcDate) - new Date(b.utcDate));
-    countEl.textContent = `${matches.length} match${matches.length===1?"":"es"}`;
+    count.textContent = `${matches.length} match${matches.length===1?"":"es"}`;
 
-    rowsEl.innerHTML = matches.map(m=>{
+    rows.innerHTML = matches.map(m=>{
       const when = ukTime(m.utcDate);
       const home = m.homeTeam?.name || "—";
       const away = m.awayTeam?.name || "—";
       const md = (m.matchday ?? "—");
       return `
         <tr>
-          <td>
-            <div class="teams">${when}</div>
-            <div class="meta">${m.status}</div>
-          </td>
-          <td>
-            <div class="teams">${home} vs ${away}</div>
-            <div class="meta">${m.stage || ""} ${m.group ? "• " + m.group : ""}</div>
-          </td>
+          <td><div class="teams">${when}</div><div class="meta">${m.status}</div></td>
+          <td><div class="teams">${home} vs ${away}</div></td>
           <td><div class="teams">${md}</div></td>
         </tr>
       `;
@@ -147,31 +140,30 @@
 
   async function load(){
     const code = compSel.value;
-    const status = whichSel.value;
+    const st = statusSel.value;
 
-    setStatus("Loading…");
-    rowsEl.innerHTML = `<tr><td colspan="3" class="meta">Loading…</td></tr>`;
+    setState("Loading…");
+    rows.innerHTML = `<tr><td colspan="3" class="meta">Loading…</td></tr>`;
 
     try{
-      // API docs show competitions can be addressed by code (PL, ELC, etc.). :contentReference[oaicite:2]{index=2}
-      const url = `https://api.football-data.org/v4/competitions/${code}/matches?status=${encodeURIComponent(status)}`;
+      const url = `https://api.football-data.org/v4/competitions/${code}/matches?status=${encodeURIComponent(st)}`;
       const data = await fetchViaWorker(url);
-
-      titleEl.textContent = `${data.competition?.name || code} (${code})`;
+      title.textContent = `${data.competition?.name || code} (${code})`;
       render(data.matches);
-      setStatus("Updated");
+      setState("Updated");
     }catch(e){
-      titleEl.textContent = code;
-      rowsEl.innerHTML = `<tr><td colspan="3" class="meta">Error: ${String(e.message || e)}</td></tr>`;
-      setStatus("Error");
+      title.textContent = code;
+      rows.innerHTML = `<tr><td colspan="3" class="meta">Error: ${String(e.message || e)}</td></tr>`;
+      setState("Error");
       console.error(e);
     }
   }
 
   btn.addEventListener("click", load);
   compSel.addEventListener("change", load);
-  whichSel.addEventListener("change", load);
+  statusSel.addEventListener("change", load);
 
+  // auto-load
   load();
 </script>
 </body>
