@@ -38,14 +38,7 @@
     <div class="sub">GitHub Pages frontend • Cloudflare Worker API gateway</div>
 
     <div class="bar">
-      <select id="sport">
-        <option value="Soccer" selected>Football (Soccer)</option>
-        <option value="Rugby">Rugby</option>
-        <option value="Tennis">Tennis</option>
-        <option value="Golf">Golf</option>
-        <option value="Motorsport">F1 (Motorsport)</option>
-      </select>
-
+      <select id="sport"></select>
       <select id="league"></select>
 
       <select id="view">
@@ -56,6 +49,7 @@
       <button id="load">Load</button>
       <span id="state" class="pill">Ready</span>
     </div>
+
     <div class="debug" id="dbg"></div>
   </div>
 </header>
@@ -76,7 +70,7 @@
         </tr>
       </thead>
       <tbody id="rows">
-        <tr><td colspan="3" class="meta">Choose a sport/league and press Load.</td></tr>
+        <tr><td colspan="3" class="meta">Loading…</td></tr>
       </tbody>
     </table>
   </div>
@@ -87,15 +81,16 @@
 
   const sportSel = document.getElementById("sport");
   const leagueSel = document.getElementById("league");
-  const viewSel = document.getElementById("view");
-  const btn = document.getElementById("load");
+  const viewSel  = document.getElementById("view");
+  const btn      = document.getElementById("load");
+
   const state = document.getElementById("state");
   const title = document.getElementById("title");
   const count = document.getElementById("count");
-  const rows = document.getElementById("rows");
-  const dbg = document.getElementById("dbg");
+  const rows  = document.getElementById("rows");
+  const dbg   = document.getElementById("dbg");
 
-  // Preset “main competitions” for football (fast list)
+  // Football main comps
   const FOOTBALL_MAIN = [
     { id: "4328", name: "English Premier League" },
     { id: "4329", name: "EFL Championship" },
@@ -108,12 +103,15 @@
     { id: "4668", name: "Saudi Pro League" }
   ];
 
-  // Request guards
-  let leaguesReqId = 0;
-  let eventsReqId = 0;
+  // F1 preset (league id on TSDB)
+  const F1_PRESET = [{ id: "4370", name: "Formula 1" }];
 
-  // Cache all leagues in memory (so switching sports is instant)
-  let allLeaguesCache = null;
+  // Request guards to avoid stale “mixing”
+  let leaguesReqId = 0;
+  let eventsReqId  = 0;
+
+  // Cache all leagues
+  let ALL_LEAGUES = null;
 
   function setState(t){ state.textContent = t; }
   function setDbg(html){ dbg.innerHTML = html; }
@@ -143,73 +141,113 @@
     const text = await res.text();
     let data;
     try { data = JSON.parse(text); }
-    catch { throw new Error("Bad JSON: " + text.slice(0,160)); }
+    catch { throw new Error("Bad JSON: " + text.slice(0,180)); }
     if (!res.ok) throw new Error(data?.message || data?.error || `HTTP ${res.status}`);
     return data;
   }
 
-  function fillLeagueSelect(list){
-    leagueSel.innerHTML = "";
+  function fillSelect(el, list, placeholder){
+    el.innerHTML = "";
+    if (!list.length) {
+      el.innerHTML = `<option value="">${placeholder}</option>`;
+      return;
+    }
     for (const item of list) {
       const opt = document.createElement("option");
-      opt.value = item.id;
-      opt.textContent = `${item.name} (${item.id})`;
-      leagueSel.appendChild(opt);
+      opt.value = item.value;
+      opt.textContent = item.label;
+      el.appendChild(opt);
     }
-    if (leagueSel.options.length > 0) leagueSel.selectedIndex = 0;
+    el.selectedIndex = 0;
   }
 
   async function ensureAllLeagues(){
-    if (allLeaguesCache) return allLeaguesCache;
+    if (ALL_LEAGUES) return ALL_LEAGUES;
     const data = await getJson("/v2/tsdb/all_leagues");
-    allLeaguesCache = data.leagues || [];
-    return allLeaguesCache;
+    ALL_LEAGUES = data.leagues || [];
+    return ALL_LEAGUES;
   }
 
-  // ✅ Reliable: filter by strSport from the full list
+  // Build Sport dropdown from real data + our curated categories
+  async function loadSports(){
+    setState("Loading sports…");
+    resetTable("Loading sports…");
+
+    const all = await ensureAllLeagues();
+
+    // Unique sports actually present in API
+    const sportsSet = new Set(
+      all.map(l => (l.strSport || "").trim()).filter(Boolean)
+    );
+
+    // We show a friendly curated list, but only if it exists in the dataset
+    const hasSoccer = sportsSet.has("Soccer");
+    const hasTennis = sportsSet.has("Tennis");
+    const hasGolf   = sportsSet.has("Golf");
+
+    // Rugby might be tagged as "Rugby Union" / "Rugby League"
+    const hasAnyRugby = Array.from(sportsSet).some(s => s.toLowerCase().includes("rugby"));
+
+    // Motorsport tags vary; we’ll use preset regardless, but show it as a category
+    const hasAnyMotorsport = Array.from(sportsSet).some(s => s.toLowerCase().includes("motor"));
+
+    const sportsUI = [];
+    if (hasSoccer) sportsUI.push({ value: "Soccer", label: "Football (Soccer)" });
+    if (hasAnyRugby) sportsUI.push({ value: "__RUGBY__", label: "Rugby (Union/League)" });
+    if (hasTennis) sportsUI.push({ value: "Tennis", label: "Tennis" });
+    if (hasGolf) sportsUI.push({ value: "Golf", label: "Golf" });
+    sportsUI.push({ value: "__F1__", label: "F1 (Formula 1)" });
+
+    fillSelect(sportSel, sportsUI, "No sports found");
+
+    setDbg(`Sports in API: <code>${Array.from(sportsSet).slice(0,12).join(", ")}</code>${sportsSet.size>12?"…":""}`);
+    setState("Ready");
+  }
+
+  // Load leagues based on selected sport category
   async function loadLeagues(){
     const req = ++leaguesReqId;
-    setState("Loading leagues…");
 
-    // Clear old options instantly so EPL can't remain selected
+    setState("Loading leagues…");
     leagueSel.innerHTML = `<option value="">Loading…</option>`;
     resetTable("Loading leagues…");
 
-    const sport = sportSel.value;
-
-    // Football: show curated “main comps” first, plus allow “All football leagues” below
-    if (sport === "Soccer") {
-      if (req !== leaguesReqId) return;
-      fillLeagueSelect(FOOTBALL_MAIN);
-      title.textContent = "Football leagues loaded";
-      setState("Ready");
-      setDbg(`Sport=<code>${sport}</code> • Leagues=<code>${leagueSel.options.length}</code> (curated main list)`);
-      return;
-    }
-
-    // Other sports: filter from all_leagues.php
+    const sportKey = sportSel.value;
     const all = await ensureAllLeagues();
     if (req !== leaguesReqId) return;
 
-    // TheSportsDB often uses "Rugby" as strSport for both codes, so "Rugby" works here.
-    const filtered = all
-      .filter(l => (l.strSport || "") === sport)
-      .filter(l => l.idLeague && l.strLeague)
-      .map(l => ({ id: l.idLeague, name: l.strLeague }))
-      .sort((a,b) => a.name.localeCompare(b.name));
-
-    if (!filtered.length) {
-      leagueSel.innerHTML = `<option value="">No leagues found</option>`;
-      resetTable(`No leagues found for sport "${sport}".`);
+    // Soccer = curated list (best UX)
+    if (sportKey === "Soccer") {
+      const list = FOOTBALL_MAIN.map(x => ({ value: x.id, label: `${x.name} (${x.id})` }));
+      fillSelect(leagueSel, list, "No leagues");
+      title.textContent = "Football leagues loaded";
       setState("Ready");
-      setDbg(`Sport=<code>${sport}</code> • Leagues=<code>0</code>`);
       return;
     }
 
-    fillLeagueSelect(filtered);
-    title.textContent = `${sport} leagues loaded`;
+    // F1 = preset
+    if (sportKey === "__F1__") {
+      const list = F1_PRESET.map(x => ({ value: x.id, label: `${x.name} (${x.id})` }));
+      fillSelect(leagueSel, list, "No leagues");
+      title.textContent = "F1 loaded";
+      setState("Ready");
+      return;
+    }
+
+    // Rugby category: match any sport that contains “rugby”
+    const wanted = sportKey === "__RUGBY__"
+      ? (s) => (s || "").toLowerCase().includes("rugby")
+      : (s) => (s || "").toLowerCase() === sportKey.toLowerCase();
+
+    const leagues = all
+      .filter(l => wanted(l.strSport))
+      .filter(l => l.idLeague && l.strLeague)
+      .map(l => ({ value: l.idLeague, label: `${l.strLeague} (${l.idLeague})` }))
+      .sort((a,b) => a.label.localeCompare(b.label));
+
+    fillSelect(leagueSel, leagues, "No leagues found for this sport");
+    title.textContent = leagues.length ? "Leagues loaded" : "No leagues found";
     setState("Ready");
-    setDbg(`Sport=<code>${sport}</code> • Leagues=<code>${leagueSel.options.length}</code>`);
   }
 
   function normalizeStatus(ev) {
@@ -219,13 +257,11 @@
   }
 
   async function loadEvents(){
-    const league = leagueSel.value;
-    const mode = viewSel.value;
-    const sport = sportSel.value;
-
     const req = ++eventsReqId;
 
-    // Always clear old table first — prevents “sticky EPL”
+    const league = leagueSel.value;
+    const mode   = viewSel.value;
+
     resetTable("Loading…");
     setState("Loading…");
 
@@ -236,26 +272,22 @@
     }
 
     const path = `/v2/tsdb/events?league=${encodeURIComponent(league)}&mode=${encodeURIComponent(mode)}`;
-    setDbg(`Sport=<code>${sport}</code> • LeagueID=<code>${league}</code> • Mode=<code>${mode}</code> • API=<code>${path}</code>`);
+    setDbg(`${dbg.innerHTML}<br>Query: <code>${path}</code>`);
 
-    try {
+    try{
       const data = await getJson(path);
       if (req !== eventsReqId) return;
 
       const events = data.events || [];
       if (!events.length) {
-        resetTable("No events returned (try Results or another league).");
+        resetTable("No events returned (try Results or choose another league).");
         setState("Updated");
         return;
       }
 
       events.sort((a,b) => ((a.dateEvent||"")+(a.strTime||"")).localeCompare((b.dateEvent||"")+(b.strTime||"")));
 
-      const leagueName =
-        events[0].strLeague ||
-        leagueSel.options[leagueSel.selectedIndex]?.textContent ||
-        "Events";
-
+      const leagueName = events[0].strLeague || leagueSel.options[leagueSel.selectedIndex]?.textContent || "Events";
       title.textContent = leagueName;
       count.textContent = `${events.length} event${events.length===1?"":"s"}`;
 
@@ -282,7 +314,7 @@
       }).join("");
 
       setState("Updated");
-    } catch (e) {
+    } catch(e){
       if (req !== eventsReqId) return;
       rows.innerHTML = `<tr><td colspan="3" class="meta errorline">Error: ${String(e.message || e)}</td></tr>`;
       count.textContent = "0 events";
@@ -293,18 +325,18 @@
 
   // Wiring
   sportSel.addEventListener("change", async () => {
-    // invalidate in-flight events
-    eventsReqId++;
+    eventsReqId++; // invalidate in-flight events
     await loadLeagues();
     await loadEvents();
   });
 
-  leagueSel.addEventListener("change", () => loadEvents());
-  viewSel.addEventListener("change", () => loadEvents());
-  btn.addEventListener("click", () => loadEvents());
+  leagueSel.addEventListener("change", loadEvents);
+  viewSel.addEventListener("change", loadEvents);
+  btn.addEventListener("click", loadEvents);
 
   // Init
   (async () => {
+    await loadSports();
     await loadLeagues();
     await loadEvents();
   })();
