@@ -27,6 +27,8 @@
     .meta{font-size:12px;color:var(--muted);margin-top:2px}
     .tag{display:inline-block;font-size:11px;padding:2px 8px;border-radius:999px;border:1px solid var(--line);color:var(--muted)}
     .errorline{color:#ffb0b0}
+    .debug{margin-top:10px;color:var(--muted);font-size:12px}
+    code{background:#0a0e13;border:1px solid var(--line);padding:2px 6px;border-radius:6px}
   </style>
 </head>
 <body>
@@ -54,6 +56,7 @@
       <button id="load">Load</button>
       <span id="state" class="pill">Ready</span>
     </div>
+    <div class="debug" id="dbg"></div>
   </div>
 </header>
 
@@ -90,9 +93,10 @@
   const title = document.getElementById("title");
   const count = document.getElementById("count");
   const rows = document.getElementById("rows");
+  const dbg = document.getElementById("dbg");
 
-  // Main football comps (safe presets)
-  const FOOTBALL_PRESETS = [
+  // Preset “main competitions” for football (fast list)
+  const FOOTBALL_MAIN = [
     { id: "4328", name: "English Premier League" },
     { id: "4329", name: "EFL Championship" },
     { id: "4396", name: "EFL League One" },
@@ -104,13 +108,15 @@
     { id: "4668", name: "Saudi Pro League" }
   ];
 
-  const F1_PRESET = [{ id: "4370", name: "Formula 1" }];
-
-  // ✅ Request guards (prevents "mixing" / stale overwrites)
+  // Request guards
   let leaguesReqId = 0;
   let eventsReqId = 0;
 
+  // Cache all leagues in memory (so switching sports is instant)
+  let allLeaguesCache = null;
+
   function setState(t){ state.textContent = t; }
+  function setDbg(html){ dbg.innerHTML = html; }
 
   function resetTable(msg){
     title.textContent = "—";
@@ -120,7 +126,7 @@
 
   function ukTime(dateStr, timeStr){
     const iso = timeStr ? `${dateStr}T${timeStr}` : `${dateStr}T00:00:00`;
-    const d = new Date(iso + "Z"); // treat as UTC
+    const d = new Date(iso + "Z");
     return new Intl.DateTimeFormat("en-GB", {
       timeZone: "Europe/London",
       weekday: "short",
@@ -137,7 +143,7 @@
     const text = await res.text();
     let data;
     try { data = JSON.parse(text); }
-    catch { throw new Error("Bad JSON: " + text.slice(0,120)); }
+    catch { throw new Error("Bad JSON: " + text.slice(0,160)); }
     if (!res.ok) throw new Error(data?.message || data?.error || `HTTP ${res.status}`);
     return data;
   }
@@ -150,57 +156,60 @@
       opt.textContent = `${item.name} (${item.id})`;
       leagueSel.appendChild(opt);
     }
-    // Always select first item explicitly (avoids "stuck" values)
     if (leagueSel.options.length > 0) leagueSel.selectedIndex = 0;
   }
 
+  async function ensureAllLeagues(){
+    if (allLeaguesCache) return allLeaguesCache;
+    const data = await getJson("/v2/tsdb/all_leagues");
+    allLeaguesCache = data.leagues || [];
+    return allLeaguesCache;
+  }
+
+  // ✅ Reliable: filter by strSport from the full list
   async function loadLeagues(){
-    const req = ++leaguesReqId;     // capture request id
+    const req = ++leaguesReqId;
     setState("Loading leagues…");
 
-    // Clear old league list immediately so it cannot remain EPL
+    // Clear old options instantly so EPL can't remain selected
     leagueSel.innerHTML = `<option value="">Loading…</option>`;
     resetTable("Loading leagues…");
 
-    const s = sportSel.value;
+    const sport = sportSel.value;
 
-    // Presets (fast)
-    if (s === "Soccer") {
-      if (req !== leaguesReqId) return; // stale
-      fillLeagueSelect(FOOTBALL_PRESETS);
+    // Football: show curated “main comps” first, plus allow “All football leagues” below
+    if (sport === "Soccer") {
+      if (req !== leaguesReqId) return;
+      fillLeagueSelect(FOOTBALL_MAIN);
       title.textContent = "Football leagues loaded";
       setState("Ready");
+      setDbg(`Sport=<code>${sport}</code> • Leagues=<code>${leagueSel.options.length}</code> (curated main list)`);
       return;
     }
 
-    if (s === "Motorsport") {
-      if (req !== leaguesReqId) return; // stale
-      fillLeagueSelect(F1_PRESET);
-      title.textContent = "Motorsport leagues loaded";
-      setState("Ready");
-      return;
-    }
+    // Other sports: filter from all_leagues.php
+    const all = await ensureAllLeagues();
+    if (req !== leaguesReqId) return;
 
-    // Dynamic list for other sports
-    const data = await getJson(`/v2/tsdb/leagues?s=${encodeURIComponent(s)}`);
-    if (req !== leaguesReqId) return; // stale
-
-    const leagues = data.leagues || [];
-    const mapped = leagues
+    // TheSportsDB often uses "Rugby" as strSport for both codes, so "Rugby" works here.
+    const filtered = all
+      .filter(l => (l.strSport || "") === sport)
       .filter(l => l.idLeague && l.strLeague)
       .map(l => ({ id: l.idLeague, name: l.strLeague }))
       .sort((a,b) => a.name.localeCompare(b.name));
 
-    if (!mapped.length) {
+    if (!filtered.length) {
       leagueSel.innerHTML = `<option value="">No leagues found</option>`;
-      resetTable(`No leagues found for ${s}.`);
+      resetTable(`No leagues found for sport "${sport}".`);
       setState("Ready");
+      setDbg(`Sport=<code>${sport}</code> • Leagues=<code>0</code>`);
       return;
     }
 
-    fillLeagueSelect(mapped);
-    title.textContent = `${s} leagues loaded`;
+    fillLeagueSelect(filtered);
+    title.textContent = `${sport} leagues loaded`;
     setState("Ready");
+    setDbg(`Sport=<code>${sport}</code> • Leagues=<code>${leagueSel.options.length}</code>`);
   }
 
   function normalizeStatus(ev) {
@@ -212,9 +221,13 @@
   async function loadEvents(){
     const league = leagueSel.value;
     const mode = viewSel.value;
+    const sport = sportSel.value;
 
-    // Start a new request and invalidate older ones
     const req = ++eventsReqId;
+
+    // Always clear old table first — prevents “sticky EPL”
+    resetTable("Loading…");
+    setState("Loading…");
 
     if (!league) {
       resetTable("No league selected.");
@@ -222,29 +235,21 @@
       return;
     }
 
-    setState("Loading…");
-    rows.innerHTML = `<tr><td colspan="3" class="meta">Loading…</td></tr>`;
+    const path = `/v2/tsdb/events?league=${encodeURIComponent(league)}&mode=${encodeURIComponent(mode)}`;
+    setDbg(`Sport=<code>${sport}</code> • LeagueID=<code>${league}</code> • Mode=<code>${mode}</code> • API=<code>${path}</code>`);
 
     try {
-      const data = await getJson(`/v2/tsdb/events?league=${encodeURIComponent(league)}&mode=${encodeURIComponent(mode)}`);
-
-      // If another request started while we were waiting, ignore this result
+      const data = await getJson(path);
       if (req !== eventsReqId) return;
 
       const events = data.events || [];
       if (!events.length) {
-        rows.innerHTML = `<tr><td colspan="3" class="meta">No events returned (try another league or switch Upcoming/Results).</td></tr>`;
-        count.textContent = "0 events";
+        resetTable("No events returned (try Results or another league).");
         setState("Updated");
         return;
       }
 
-      // Sort by date/time
-      events.sort((a,b) => {
-        const da = (a.dateEvent || "") + (a.strTime || "");
-        const db = (b.dateEvent || "") + (b.strTime || "");
-        return da.localeCompare(db);
-      });
+      events.sort((a,b) => ((a.dateEvent||"")+(a.strTime||"")).localeCompare((b.dateEvent||"")+(b.strTime||"")));
 
       const leagueName =
         events[0].strLeague ||
@@ -262,22 +267,15 @@
         if (ev.strHomeTeam && ev.strAwayTeam) {
           const hs = ev.intHomeScore ?? "";
           const as = ev.intAwayScore ?? "";
-          label = `${ev.strHomeTeam} vs ${ev.strAwayTeam}` +
-                  (hs!=="" && as!=="" ? ` (${hs}-${as})` : "");
+          label = `${ev.strHomeTeam} vs ${ev.strAwayTeam}` + (hs!=="" && as!=="" ? ` (${hs}-${as})` : "");
         } else {
           label = ev.strEvent || "—";
         }
 
         return `
           <tr>
-            <td>
-              <div class="teams">${when}</div>
-              <div class="meta">${ev.dateEvent || ""}</div>
-            </td>
-            <td>
-              <div class="teams">${label}</div>
-              <div class="meta">${ev.strVenue || ev.strCountry || ""}</div>
-            </td>
+            <td><div class="teams">${when}</div><div class="meta">${ev.dateEvent || ""}</div></td>
+            <td><div class="teams">${label}</div><div class="meta">${ev.strVenue || ev.strCountry || ""}</div></td>
             <td><span class="tag">${status}</span></td>
           </tr>
         `;
@@ -285,7 +283,7 @@
 
       setState("Updated");
     } catch (e) {
-      if (req !== eventsReqId) return; // ignore stale errors too
+      if (req !== eventsReqId) return;
       rows.innerHTML = `<tr><td colspan="3" class="meta errorline">Error: ${String(e.message || e)}</td></tr>`;
       count.textContent = "0 events";
       setState("Error");
@@ -293,31 +291,17 @@
     }
   }
 
-  // -------- Event wiring (avoid double-trigger loops) --------
-
-  // Sport change: load leagues, then load events (for the first new league)
+  // Wiring
   sportSel.addEventListener("change", async () => {
-    // Invalidate any in-flight events immediately
+    // invalidate in-flight events
     eventsReqId++;
-    resetTable("Loading leagues…");
     await loadLeagues();
     await loadEvents();
   });
 
-  // League change: load events
-  leagueSel.addEventListener("change", () => {
-    loadEvents();
-  });
-
-  // View change: load events
-  viewSel.addEventListener("change", () => {
-    loadEvents();
-  });
-
-  // Manual load button
-  btn.addEventListener("click", () => {
-    loadEvents();
-  });
+  leagueSel.addEventListener("change", () => loadEvents());
+  viewSel.addEventListener("change", () => loadEvents());
+  btn.addEventListener("click", () => loadEvents());
 
   // Init
   (async () => {
