@@ -26,6 +26,7 @@
     .teams{font-weight:650}
     .meta{font-size:12px;color:var(--muted);margin-top:2px}
     .tag{display:inline-block;font-size:11px;padding:2px 8px;border-radius:999px;border:1px solid var(--line);color:var(--muted)}
+    .errorline{color:#ffb0b0}
   </style>
 </head>
 <body>
@@ -79,6 +80,7 @@
 </div>
 
 <script>
+  // Your Worker base
   const API = "https://api.techapex.co.uk";
 
   const sportSel = document.getElementById("sport");
@@ -90,7 +92,7 @@
   const count = document.getElementById("count");
   const rows = document.getElementById("rows");
 
-  // Handy football presets (fast access)
+  // Football presets (main comps)
   const FOOTBALL_PRESETS = [
     { id: "4328", name: "English Premier League" },
     { id: "4329", name: "EFL Championship" },
@@ -108,7 +110,7 @@
   function setState(t){ state.textContent = t; }
 
   function ukTime(dateStr, timeStr){
-    // TheSportsDB often gives date + time (UTC-ish). We'll parse safely.
+    // TheSportsDB gives date + time (often UTC). If time missing, default midnight.
     const iso = timeStr ? `${dateStr}T${timeStr}` : `${dateStr}T00:00:00`;
     const d = new Date(iso + "Z"); // treat as UTC
     return new Intl.DateTimeFormat("en-GB", {
@@ -142,17 +144,26 @@
     }
   }
 
+  // ✅ FIXED: Reset dropdown + UI so it never stays on EPL when sport changes
   async function loadLeagues() {
     setState("Loading leagues…");
+
+    // Reset immediately (prevents old EPL sticking)
+    leagueSel.innerHTML = `<option value="">Loading…</option>`;
+    title.textContent = "Loading leagues…";
+    count.textContent = "0 events";
+    rows.innerHTML = `<tr><td colspan="3" class="meta">Loading leagues…</td></tr>`;
+
     const s = sportSel.value;
 
-    // Use presets for Soccer & Motorsport (F1) to guarantee the “main comps”
+    // Presets guarantee “main competitions”
     if (s === "Soccer") {
       fillLeagueSelectFromList(FOOTBALL_PRESETS);
       title.textContent = "Football leagues loaded";
       setState("Ready");
       return;
     }
+
     if (s === "Motorsport") {
       fillLeagueSelectFromList(F1_PRESET);
       title.textContent = "Motorsport leagues loaded";
@@ -160,10 +171,9 @@
       return;
     }
 
-    // For Rugby/Tennis/Golf: fetch the leagues list dynamically
+    // Dynamic leagues for Rugby/Tennis/Golf
     const data = await getJson(`/v2/tsdb/leagues?s=${encodeURIComponent(s)}`);
 
-    // all_leagues.php returns { leagues: [...] } in most cases
     const leagues = data.leagues || [];
     const mapped = leagues
       .filter(l => l.idLeague && l.strLeague)
@@ -173,6 +183,7 @@
     if (!mapped.length) {
       leagueSel.innerHTML = `<option value="">No leagues found</option>`;
       title.textContent = `${s}: no leagues`;
+      rows.innerHTML = `<tr><td colspan="3" class="meta">No leagues found for ${s}.</td></tr>`;
       setState("Ready");
       return;
     }
@@ -183,9 +194,7 @@
   }
 
   function normalizeStatus(ev) {
-    // SportsDB uses strStatus sometimes, but it can be empty.
     if (ev.strStatus) return ev.strStatus;
-    // If scores exist, treat as FT
     if (ev.intHomeScore !== null && ev.intHomeScore !== "" && ev.intHomeScore !== undefined) return "FT";
     return "NS";
   }
@@ -196,6 +205,7 @@
 
     if (!league) {
       rows.innerHTML = `<tr><td colspan="3" class="meta">No league selected.</td></tr>`;
+      count.textContent = "0 events";
       return;
     }
 
@@ -204,9 +214,8 @@
 
     try {
       const data = await getJson(`/v2/tsdb/events?league=${encodeURIComponent(league)}&mode=${encodeURIComponent(mode)}`);
-
-      // eventsnextleague/eventspastleague usually returns { events: [...] }
       const events = data.events || [];
+
       if (!events.length) {
         rows.innerHTML = `<tr><td colspan="3" class="meta">No events returned (try another league or switch Upcoming/Results).</td></tr>`;
         count.textContent = "0 events";
@@ -214,11 +223,14 @@
         return;
       }
 
-      // Sort by date
-      events.sort((a,b) => (a.dateEvent || "").localeCompare(b.dateEvent || ""));
+      // Sort by date/time
+      events.sort((a,b) => {
+        const da = (a.dateEvent || "") + (a.strTime || "");
+        const db = (b.dateEvent || "") + (b.strTime || "");
+        return da.localeCompare(db);
+      });
 
-      // Set title from first item if available
-      const leagueName = events[0].strLeague || leagueSel.options[leagueSel.selectedIndex].textContent;
+      const leagueName = events[0].strLeague || leagueSel.options[leagueSel.selectedIndex]?.textContent || "Events";
       title.textContent = leagueName;
       count.textContent = `${events.length} event${events.length===1?"":"s"}`;
 
@@ -226,8 +238,6 @@
         const when = ukTime(ev.dateEvent, ev.strTime);
         const status = normalizeStatus(ev);
 
-        // Soccer format: Home vs Away
-        // F1 format: Event name
         let label = "";
         if (ev.strHomeTeam && ev.strAwayTeam) {
           const hs = ev.intHomeScore ?? "";
@@ -239,8 +249,14 @@
 
         return `
           <tr>
-            <td><div class="teams">${when}</div><div class="meta">${ev.dateEvent || ""}</div></td>
-            <td><div class="teams">${label}</div><div class="meta">${ev.strVenue || ev.strCountry || ""}</div></td>
+            <td>
+              <div class="teams">${when}</div>
+              <div class="meta">${ev.dateEvent || ""}</div>
+            </td>
+            <td>
+              <div class="teams">${label}</div>
+              <div class="meta">${ev.strVenue || ev.strCountry || ""}</div>
+            </td>
             <td><span class="tag">${status}</span></td>
           </tr>
         `;
@@ -248,15 +264,23 @@
 
       setState("Updated");
     } catch (e) {
-      rows.innerHTML = `<tr><td colspan="3" class="meta">Error: ${String(e.message || e)}</td></tr>`;
+      rows.innerHTML = `<tr><td colspan="3" class="meta errorline">Error: ${String(e.message || e)}</td></tr>`;
       count.textContent = "0 events";
       setState("Error");
       console.error(e);
     }
   }
 
-  // Events
-  sportSel.addEventListener("change", async () => { await loadLeagues(); });
+  // ✅ FIXED: Changing sport now loads leagues AND immediately loads events
+  sportSel.addEventListener("change", async () => {
+    title.textContent = "Loading…";
+    count.textContent = "0 events";
+    rows.innerHTML = `<tr><td colspan="3" class="meta">Loading leagues…</td></tr>`;
+
+    await loadLeagues();
+    await loadEvents();
+  });
+
   btn.addEventListener("click", loadEvents);
   leagueSel.addEventListener("change", loadEvents);
   viewSel.addEventListener("change", loadEvents);
