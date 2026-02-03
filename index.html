@@ -80,7 +80,6 @@
 </div>
 
 <script>
-  // Your Worker base
   const API = "https://api.techapex.co.uk";
 
   const sportSel = document.getElementById("sport");
@@ -92,7 +91,7 @@
   const count = document.getElementById("count");
   const rows = document.getElementById("rows");
 
-  // Football presets (main comps)
+  // Main football comps (safe presets)
   const FOOTBALL_PRESETS = [
     { id: "4328", name: "English Premier League" },
     { id: "4329", name: "EFL Championship" },
@@ -107,10 +106,19 @@
 
   const F1_PRESET = [{ id: "4370", name: "Formula 1" }];
 
+  // ✅ Request guards (prevents "mixing" / stale overwrites)
+  let leaguesReqId = 0;
+  let eventsReqId = 0;
+
   function setState(t){ state.textContent = t; }
 
+  function resetTable(msg){
+    title.textContent = "—";
+    count.textContent = "0 events";
+    rows.innerHTML = `<tr><td colspan="3" class="meta">${msg}</td></tr>`;
+  }
+
   function ukTime(dateStr, timeStr){
-    // TheSportsDB gives date + time (often UTC). If time missing, default midnight.
     const iso = timeStr ? `${dateStr}T${timeStr}` : `${dateStr}T00:00:00`;
     const d = new Date(iso + "Z"); // treat as UTC
     return new Intl.DateTimeFormat("en-GB", {
@@ -125,7 +133,7 @@
   }
 
   async function getJson(path){
-    const res = await fetch(API + path);
+    const res = await fetch(API + path, { cache: "no-store" });
     const text = await res.text();
     let data;
     try { data = JSON.parse(text); }
@@ -134,7 +142,7 @@
     return data;
   }
 
-  function fillLeagueSelectFromList(list) {
+  function fillLeagueSelect(list){
     leagueSel.innerHTML = "";
     for (const item of list) {
       const opt = document.createElement("option");
@@ -142,37 +150,40 @@
       opt.textContent = `${item.name} (${item.id})`;
       leagueSel.appendChild(opt);
     }
+    // Always select first item explicitly (avoids "stuck" values)
+    if (leagueSel.options.length > 0) leagueSel.selectedIndex = 0;
   }
 
-  // ✅ FIXED: Reset dropdown + UI so it never stays on EPL when sport changes
-  async function loadLeagues() {
+  async function loadLeagues(){
+    const req = ++leaguesReqId;     // capture request id
     setState("Loading leagues…");
 
-    // Reset immediately (prevents old EPL sticking)
+    // Clear old league list immediately so it cannot remain EPL
     leagueSel.innerHTML = `<option value="">Loading…</option>`;
-    title.textContent = "Loading leagues…";
-    count.textContent = "0 events";
-    rows.innerHTML = `<tr><td colspan="3" class="meta">Loading leagues…</td></tr>`;
+    resetTable("Loading leagues…");
 
     const s = sportSel.value;
 
-    // Presets guarantee “main competitions”
+    // Presets (fast)
     if (s === "Soccer") {
-      fillLeagueSelectFromList(FOOTBALL_PRESETS);
+      if (req !== leaguesReqId) return; // stale
+      fillLeagueSelect(FOOTBALL_PRESETS);
       title.textContent = "Football leagues loaded";
       setState("Ready");
       return;
     }
 
     if (s === "Motorsport") {
-      fillLeagueSelectFromList(F1_PRESET);
+      if (req !== leaguesReqId) return; // stale
+      fillLeagueSelect(F1_PRESET);
       title.textContent = "Motorsport leagues loaded";
       setState("Ready");
       return;
     }
 
-    // Dynamic leagues for Rugby/Tennis/Golf
+    // Dynamic list for other sports
     const data = await getJson(`/v2/tsdb/leagues?s=${encodeURIComponent(s)}`);
+    if (req !== leaguesReqId) return; // stale
 
     const leagues = data.leagues || [];
     const mapped = leagues
@@ -182,13 +193,12 @@
 
     if (!mapped.length) {
       leagueSel.innerHTML = `<option value="">No leagues found</option>`;
-      title.textContent = `${s}: no leagues`;
-      rows.innerHTML = `<tr><td colspan="3" class="meta">No leagues found for ${s}.</td></tr>`;
+      resetTable(`No leagues found for ${s}.`);
       setState("Ready");
       return;
     }
 
-    fillLeagueSelectFromList(mapped);
+    fillLeagueSelect(mapped);
     title.textContent = `${s} leagues loaded`;
     setState("Ready");
   }
@@ -199,13 +209,16 @@
     return "NS";
   }
 
-  async function loadEvents() {
+  async function loadEvents(){
     const league = leagueSel.value;
     const mode = viewSel.value;
 
+    // Start a new request and invalidate older ones
+    const req = ++eventsReqId;
+
     if (!league) {
-      rows.innerHTML = `<tr><td colspan="3" class="meta">No league selected.</td></tr>`;
-      count.textContent = "0 events";
+      resetTable("No league selected.");
+      setState("Ready");
       return;
     }
 
@@ -214,8 +227,11 @@
 
     try {
       const data = await getJson(`/v2/tsdb/events?league=${encodeURIComponent(league)}&mode=${encodeURIComponent(mode)}`);
-      const events = data.events || [];
 
+      // If another request started while we were waiting, ignore this result
+      if (req !== eventsReqId) return;
+
+      const events = data.events || [];
       if (!events.length) {
         rows.innerHTML = `<tr><td colspan="3" class="meta">No events returned (try another league or switch Upcoming/Results).</td></tr>`;
         count.textContent = "0 events";
@@ -230,7 +246,11 @@
         return da.localeCompare(db);
       });
 
-      const leagueName = events[0].strLeague || leagueSel.options[leagueSel.selectedIndex]?.textContent || "Events";
+      const leagueName =
+        events[0].strLeague ||
+        leagueSel.options[leagueSel.selectedIndex]?.textContent ||
+        "Events";
+
       title.textContent = leagueName;
       count.textContent = `${events.length} event${events.length===1?"":"s"}`;
 
@@ -242,7 +262,8 @@
         if (ev.strHomeTeam && ev.strAwayTeam) {
           const hs = ev.intHomeScore ?? "";
           const as = ev.intAwayScore ?? "";
-          label = `${ev.strHomeTeam} vs ${ev.strAwayTeam}` + (hs!=="" && as!=="" ? ` (${hs}-${as})` : "");
+          label = `${ev.strHomeTeam} vs ${ev.strAwayTeam}` +
+                  (hs!=="" && as!=="" ? ` (${hs}-${as})` : "");
         } else {
           label = ev.strEvent || "—";
         }
@@ -264,6 +285,7 @@
 
       setState("Updated");
     } catch (e) {
+      if (req !== eventsReqId) return; // ignore stale errors too
       rows.innerHTML = `<tr><td colspan="3" class="meta errorline">Error: ${String(e.message || e)}</td></tr>`;
       count.textContent = "0 events";
       setState("Error");
@@ -271,19 +293,31 @@
     }
   }
 
-  // ✅ FIXED: Changing sport now loads leagues AND immediately loads events
-  sportSel.addEventListener("change", async () => {
-    title.textContent = "Loading…";
-    count.textContent = "0 events";
-    rows.innerHTML = `<tr><td colspan="3" class="meta">Loading leagues…</td></tr>`;
+  // -------- Event wiring (avoid double-trigger loops) --------
 
+  // Sport change: load leagues, then load events (for the first new league)
+  sportSel.addEventListener("change", async () => {
+    // Invalidate any in-flight events immediately
+    eventsReqId++;
+    resetTable("Loading leagues…");
     await loadLeagues();
     await loadEvents();
   });
 
-  btn.addEventListener("click", loadEvents);
-  leagueSel.addEventListener("change", loadEvents);
-  viewSel.addEventListener("change", loadEvents);
+  // League change: load events
+  leagueSel.addEventListener("change", () => {
+    loadEvents();
+  });
+
+  // View change: load events
+  viewSel.addEventListener("change", () => {
+    loadEvents();
+  });
+
+  // Manual load button
+  btn.addEventListener("click", () => {
+    loadEvents();
+  });
 
   // Init
   (async () => {
