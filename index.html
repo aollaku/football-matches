@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Premier League + EFL Fixtures</title>
+  <title>TechApex Sports Fixtures</title>
   <style>
     :root { --bg:#0b0f14; --card:#121a23; --text:#e7eef7; --muted:#9fb0c3; --line:#223040; --accent:#4aa3ff; }
     *{box-sizing:border-box}
@@ -13,12 +13,7 @@
     h1{margin:0;font-size:18px}
     .sub{color:var(--muted);font-size:13px;margin-top:6px}
     .bar{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-top:12px}
-    select,button,input,label{
-      background:var(--card);color:var(--text);
-      border:1px solid var(--line);border-radius:10px;
-      padding:10px 12px;font-size:14px;outline:none
-    }
-    input{min-width:170px}
+    select,button{background:var(--card);color:var(--text);border:1px solid var(--line);border-radius:10px;padding:10px 12px;font-size:14px}
     button{cursor:pointer;border-color:rgba(74,163,255,.45)}
     button:hover{background:rgba(74,163,255,.08)}
     .pill{font-size:12px;color:var(--muted);border:1px solid var(--line);padding:2px 8px;border-radius:999px}
@@ -30,63 +25,33 @@
     tr:hover td{background:rgba(255,255,255,.02)}
     .teams{font-weight:650}
     .meta{font-size:12px;color:var(--muted);margin-top:2px}
-    .statusTag{display:inline-block;margin-top:6px;font-size:11px;padding:2px 8px;border-radius:999px;border:1px solid var(--line);color:var(--muted)}
-    .live{color:#ffb0b0;border-color:rgba(255,176,176,.35)}
-    .ft{color:#bfe3c6;border-color:rgba(191,227,198,.35)}
-    .crest{width:18px;height:18px;vertical-align:-3px;margin-right:8px;border-radius:3px}
-    .rowMatch{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
-    .right{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
-    .small{font-size:12px;color:var(--muted)}
+    .tag{display:inline-block;font-size:11px;padding:2px 8px;border-radius:999px;border:1px solid var(--line);color:var(--muted)}
   </style>
 </head>
 <body>
 <header>
   <div class="wrap">
-    <h1>Premier League + EFL Fixtures</h1>
-    <div class="sub">Frontend: GitHub Pages • Data: football-data.org via your Cloudflare Worker</div>
+    <h1>TechApex Sports Fixtures</h1>
+    <div class="sub">GitHub Pages frontend • Cloudflare Worker API gateway</div>
 
     <div class="bar">
-      <select id="comp">
-        <option value="PL">Premier League</option>
-        <option value="ELC">EFL Championship</option>
+      <select id="sport">
+        <option value="Soccer" selected>Football (Soccer)</option>
+        <option value="Rugby">Rugby</option>
+        <option value="Tennis">Tennis</option>
+        <option value="Golf">Golf</option>
+        <option value="Motorsport">F1 (Motorsport)</option>
       </select>
+
+      <select id="league"></select>
 
       <select id="view">
-        <option value="upcoming" selected>Upcoming</option>
-        <option value="live">Live now</option>
-        <option value="finished">Finished</option>
-        <option value="all">All</option>
+        <option value="next" selected>Upcoming</option>
+        <option value="past">Results</option>
       </select>
-
-      <select id="range">
-        <option value="all" selected>All dates</option>
-        <option value="today">Today</option>
-        <option value="tomorrow">Tomorrow</option>
-        <option value="7d">Next 7 days</option>
-      </select>
-
-      <input id="q" placeholder="Search team…" />
-      <input id="matchday" type="number" min="1" placeholder="Matchday (optional)" style="width:170px;"/>
 
       <button id="load">Load</button>
       <span id="state" class="pill">Ready</span>
-
-      <div class="right">
-        <label class="small" style="display:flex;align-items:center;gap:8px;">
-          <input id="auto" type="checkbox" style="min-width:auto;margin:0;" />
-          Auto refresh
-        </label>
-        <select id="every" style="min-width:140px;">
-          <option value="30">30s</option>
-          <option value="60" selected>60s</option>
-          <option value="300">5 min</option>
-        </select>
-
-        <label class="small" style="display:flex;align-items:center;gap:8px;">
-          <input id="crests" type="checkbox" checked style="min-width:auto;margin:0;" />
-          Team crests
-        </label>
-      </div>
     </div>
   </div>
 </header>
@@ -95,46 +60,57 @@
   <div class="card">
     <div class="head">
       <div id="title" class="teams">—</div>
-      <div id="count" class="meta">0 matches</div>
+      <div id="count" class="meta">0 events</div>
     </div>
 
     <table>
       <thead>
         <tr>
-          <th style="width:250px;">Date / Time (UK)</th>
-          <th>Match</th>
-          <th style="width:110px;">Matchday</th>
+          <th style="width:260px;">Date / Time (UK)</th>
+          <th>Event</th>
+          <th style="width:130px;">Status</th>
         </tr>
       </thead>
       <tbody id="rows">
-        <tr><td colspan="3" class="meta">Press Load.</td></tr>
+        <tr><td colspan="3" class="meta">Choose a sport/league and press Load.</td></tr>
       </tbody>
     </table>
   </div>
 </div>
 
 <script>
-  const WORKER_API = "https://api.techapex.co.uk";
+  const API = "https://api.techapex.co.uk";
 
-  const compSel = document.getElementById("comp");
+  const sportSel = document.getElementById("sport");
+  const leagueSel = document.getElementById("league");
   const viewSel = document.getElementById("view");
-  const rangeSel = document.getElementById("range");
-  const qInp = document.getElementById("q");
-  const mdInp = document.getElementById("matchday");
   const btn = document.getElementById("load");
   const state = document.getElementById("state");
   const title = document.getElementById("title");
   const count = document.getElementById("count");
   const rows = document.getElementById("rows");
-  const autoChk = document.getElementById("auto");
-  const everySel = document.getElementById("every");
-  const crestsChk = document.getElementById("crests");
 
-  let timer = null;
+  // Handy football presets (fast access)
+  const FOOTBALL_PRESETS = [
+    { id: "4328", name: "English Premier League" },
+    { id: "4329", name: "EFL Championship" },
+    { id: "4396", name: "EFL League One" },
+    { id: "4331", name: "German Bundesliga" },
+    { id: "4332", name: "Italian Serie A" },
+    { id: "4334", name: "French Ligue 1" },
+    { id: "4335", name: "Spanish La Liga" },
+    { id: "4401", name: "UEFA Champions League" },
+    { id: "4668", name: "Saudi Pro League" }
+  ];
+
+  const F1_PRESET = [{ id: "4370", name: "Formula 1" }];
 
   function setState(t){ state.textContent = t; }
 
-  function ukTime(utcIso){
+  function ukTime(dateStr, timeStr){
+    // TheSportsDB often gives date + time (UTC-ish). We'll parse safely.
+    const iso = timeStr ? `${dateStr}T${timeStr}` : `${dateStr}T00:00:00`;
+    const d = new Date(iso + "Z"); // treat as UTC
     return new Intl.DateTimeFormat("en-GB", {
       timeZone: "Europe/London",
       weekday: "short",
@@ -143,177 +119,153 @@
       day: "2-digit",
       hour: "2-digit",
       minute: "2-digit"
-    }).format(new Date(utcIso));
+    }).format(d);
   }
 
-  function ymd(d){
-    const y = d.getFullYear();
-    const m = String(d.getMonth()+1).padStart(2,'0');
-    const dd = String(d.getDate()).padStart(2,'0');
-    return `${y}-${m}-${dd}`;
-  }
-
-  // ✅ Default ranges by view to keep responses fast, unless user chooses a manual range.
-  function getDateRangeParam(){
-    const now = new Date();
-    const r = rangeSel.value;
-    const view = viewSel.value;
-
-    if (r === "today") return { dateFrom: ymd(now), dateTo: ymd(now) };
-    if (r === "tomorrow") {
-      const t = new Date(now); t.setDate(t.getDate()+1);
-      return { dateFrom: ymd(t), dateTo: ymd(t) };
-    }
-    if (r === "7d") {
-      const to = new Date(now); to.setDate(to.getDate()+7);
-      return { dateFrom: ymd(now), dateTo: ymd(to) };
-    }
-
-    if (view === "upcoming" || view === "live") {
-      const to = new Date(now); to.setDate(to.getDate()+30);
-      return { dateFrom: ymd(now), dateTo: ymd(to) };
-    }
-    if (view === "finished") {
-      const from = new Date(now); from.setDate(from.getDate()-30);
-      return { dateFrom: ymd(from), dateTo: ymd(now) };
-    }
-
-    return null; // all
-  }
-
-  async function fetchMatches(){
-    const code = compSel.value;
-
-    // ✅ Do NOT send status=... (multi-status can break). We'll filter client-side.
-    const range = getDateRangeParam();
-    const qs = new URLSearchParams();
-    if (range) { qs.set("dateFrom", range.dateFrom); qs.set("dateTo", range.dateTo); }
-
-    const target = `https://api.football-data.org/v4/competitions/${code}/matches` + (qs.toString() ? `?${qs}` : "");
-    const proxied = `${WORKER_API}/?url=${encodeURIComponent(target)}`;
-
-    const res = await fetch(proxied);
+  async function getJson(path){
+    const res = await fetch(API + path);
     const text = await res.text();
-
     let data;
     try { data = JSON.parse(text); }
     catch { throw new Error("Bad JSON: " + text.slice(0,120)); }
-
     if (!res.ok) throw new Error(data?.message || data?.error || `HTTP ${res.status}`);
     return data;
   }
 
-  function statusClass(st){
-    if (st === "IN_PLAY" || st === "PAUSED") return "statusTag live";
-    if (st === "FINISHED") return "statusTag ft";
-    return "statusTag";
+  function fillLeagueSelectFromList(list) {
+    leagueSel.innerHTML = "";
+    for (const item of list) {
+      const opt = document.createElement("option");
+      opt.value = item.id;
+      opt.textContent = `${item.name} (${item.id})`;
+      leagueSel.appendChild(opt);
+    }
   }
 
-  function render(matches){
-    const q = (qInp.value || "").trim().toLowerCase();
-    const md = (mdInp.value || "").trim();
-    const v = viewSel.value;
+  async function loadLeagues() {
+    setState("Loading leagues…");
+    const s = sportSel.value;
 
-    let list = Array.isArray(matches) ? matches.slice() : [];
-
-    // View filter
-    if (v === "upcoming") list = list.filter(m => ["SCHEDULED","TIMED"].includes(m.status));
-    if (v === "live") list = list.filter(m => ["IN_PLAY","PAUSED"].includes(m.status));
-    if (v === "finished") list = list.filter(m => ["FINISHED"].includes(m.status));
-
-    // Matchday filter
-    if (md) list = list.filter(m => String(m.matchday ?? "") === String(md));
-
-    // Search filter
-    if (q) {
-      list = list.filter(m => {
-        const h = (m.homeTeam?.name || "").toLowerCase();
-        const a = (m.awayTeam?.name || "").toLowerCase();
-        return h.includes(q) || a.includes(q);
-      });
+    // Use presets for Soccer & Motorsport (F1) to guarantee the “main comps”
+    if (s === "Soccer") {
+      fillLeagueSelectFromList(FOOTBALL_PRESETS);
+      title.textContent = "Football leagues loaded";
+      setState("Ready");
+      return;
     }
-
-    if (!list.length){
-      rows.innerHTML = `<tr><td colspan="3" class="meta">No matches for your filters.</td></tr>`;
-      count.textContent = "0 matches";
+    if (s === "Motorsport") {
+      fillLeagueSelectFromList(F1_PRESET);
+      title.textContent = "Motorsport leagues loaded";
+      setState("Ready");
       return;
     }
 
-    list.sort((a,b)=> new Date(a.utcDate) - new Date(b.utcDate));
-    count.textContent = `${list.length} match${list.length===1?"":"es"}`;
+    // For Rugby/Tennis/Golf: fetch the leagues list dynamically
+    const data = await getJson(`/v2/tsdb/leagues?s=${encodeURIComponent(s)}`);
 
-    const showCrests = crestsChk.checked;
+    // all_leagues.php returns { leagues: [...] } in most cases
+    const leagues = data.leagues || [];
+    const mapped = leagues
+      .filter(l => l.idLeague && l.strLeague)
+      .map(l => ({ id: l.idLeague, name: l.strLeague }))
+      .sort((a,b) => a.name.localeCompare(b.name));
 
-    rows.innerHTML = list.map(m=>{
-      const when = ukTime(m.utcDate);
-      const home = m.homeTeam?.name || "—";
-      const away = m.awayTeam?.name || "—";
-      const md = (m.matchday ?? "—");
-      const st = m.status || "";
-      const crestH = m.homeTeam?.crest || "";
-      const crestA = m.awayTeam?.crest || "";
+    if (!mapped.length) {
+      leagueSel.innerHTML = `<option value="">No leagues found</option>`;
+      title.textContent = `${s}: no leagues`;
+      setState("Ready");
+      return;
+    }
 
-      const homeHtml = showCrests && crestH ? `<img class="crest" src="${crestH}" alt="">${home}` : home;
-      const awayHtml = showCrests && crestA ? `<img class="crest" src="${crestA}" alt="">${away}` : away;
-
-      return `
-        <tr>
-          <td>
-            <div class="teams">${when}</div>
-            <span class="${statusClass(st)}">${st}</span>
-          </td>
-          <td>
-            <div class="rowMatch">
-              <span class="teams">${homeHtml}</span>
-              <span class="meta">vs</span>
-              <span class="teams">${awayHtml}</span>
-            </div>
-            <div class="meta">${m.stage || ""}${m.group ? " • " + m.group : ""}</div>
-          </td>
-          <td><div class="teams">${md}</div></td>
-        </tr>
-      `;
-    }).join("");
+    fillLeagueSelectFromList(mapped);
+    title.textContent = `${s} leagues loaded`;
+    setState("Ready");
   }
 
-  async function load(){
+  function normalizeStatus(ev) {
+    // SportsDB uses strStatus sometimes, but it can be empty.
+    if (ev.strStatus) return ev.strStatus;
+    // If scores exist, treat as FT
+    if (ev.intHomeScore !== null && ev.intHomeScore !== "" && ev.intHomeScore !== undefined) return "FT";
+    return "NS";
+  }
+
+  async function loadEvents() {
+    const league = leagueSel.value;
+    const mode = viewSel.value;
+
+    if (!league) {
+      rows.innerHTML = `<tr><td colspan="3" class="meta">No league selected.</td></tr>`;
+      return;
+    }
+
     setState("Loading…");
     rows.innerHTML = `<tr><td colspan="3" class="meta">Loading…</td></tr>`;
 
-    try{
-      const data = await fetchMatches();
-      const code = compSel.value;
-      title.textContent = `${data.competition?.name || code} (${code})`;
-      render(data.matches || []);
+    try {
+      const data = await getJson(`/v2/tsdb/events?league=${encodeURIComponent(league)}&mode=${encodeURIComponent(mode)}`);
+
+      // eventsnextleague/eventspastleague usually returns { events: [...] }
+      const events = data.events || [];
+      if (!events.length) {
+        rows.innerHTML = `<tr><td colspan="3" class="meta">No events returned (try another league or switch Upcoming/Results).</td></tr>`;
+        count.textContent = "0 events";
+        setState("Updated");
+        return;
+      }
+
+      // Sort by date
+      events.sort((a,b) => (a.dateEvent || "").localeCompare(b.dateEvent || ""));
+
+      // Set title from first item if available
+      const leagueName = events[0].strLeague || leagueSel.options[leagueSel.selectedIndex].textContent;
+      title.textContent = leagueName;
+      count.textContent = `${events.length} event${events.length===1?"":"s"}`;
+
+      rows.innerHTML = events.map(ev => {
+        const when = ukTime(ev.dateEvent, ev.strTime);
+        const status = normalizeStatus(ev);
+
+        // Soccer format: Home vs Away
+        // F1 format: Event name
+        let label = "";
+        if (ev.strHomeTeam && ev.strAwayTeam) {
+          const hs = ev.intHomeScore ?? "";
+          const as = ev.intAwayScore ?? "";
+          label = `${ev.strHomeTeam} vs ${ev.strAwayTeam}` + (hs!=="" && as!=="" ? ` (${hs}-${as})` : "");
+        } else {
+          label = ev.strEvent || "—";
+        }
+
+        return `
+          <tr>
+            <td><div class="teams">${when}</div><div class="meta">${ev.dateEvent || ""}</div></td>
+            <td><div class="teams">${label}</div><div class="meta">${ev.strVenue || ev.strCountry || ""}</div></td>
+            <td><span class="tag">${status}</span></td>
+          </tr>
+        `;
+      }).join("");
+
       setState("Updated");
-    }catch(e){
-      title.textContent = compSel.value;
+    } catch (e) {
       rows.innerHTML = `<tr><td colspan="3" class="meta">Error: ${String(e.message || e)}</td></tr>`;
+      count.textContent = "0 events";
       setState("Error");
       console.error(e);
     }
   }
 
-  function applyAutoRefresh(){
-    if (timer) { clearInterval(timer); timer = null; }
-    if (!autoChk.checked) return;
+  // Events
+  sportSel.addEventListener("change", async () => { await loadLeagues(); });
+  btn.addEventListener("click", loadEvents);
+  leagueSel.addEventListener("change", loadEvents);
+  viewSel.addEventListener("change", loadEvents);
 
-    const sec = parseInt(everySel.value, 10);
-    timer = setInterval(load, sec * 1000);
-  }
-
-  btn.addEventListener("click", load);
-  compSel.addEventListener("change", load);
-  viewSel.addEventListener("change", load);
-  rangeSel.addEventListener("change", load);
-  qInp.addEventListener("input", load);
-  mdInp.addEventListener("input", load);
-  crestsChk.addEventListener("change", load);
-
-  autoChk.addEventListener("change", applyAutoRefresh);
-  everySel.addEventListener("change", applyAutoRefresh);
-
-  load();
+  // Init
+  (async () => {
+    await loadLeagues();
+    await loadEvents();
+  })();
 </script>
 </body>
 </html>
