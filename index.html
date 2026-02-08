@@ -22,7 +22,7 @@
     th,td{padding:10px 12px;border-bottom:1px solid var(--line);vertical-align:middle}
     th{font-size:12px;color:var(--muted);text-align:left}
     .teams{font-weight:650}
-    .meta{font-size:12px;color:var(--muted);margin-top:2px}
+    .meta{font-size:12px;color:var(--muted);margin-top:2px;line-height:1.35}
     .tag{display:inline-block;font-size:11px;padding:2px 8px;border-radius:999px;border:1px solid var(--line);color:var(--muted)}
     .errorline{color:#ffb0b0}
     .debug{margin-top:10px;color:var(--muted);font-size:12px}
@@ -79,6 +79,7 @@
 </div>
 
 <script>
+  // Use your Worker domain here (custom is fine too)
   const API = "https://football-api.aollaku.workers.dev";
 
   const sportSel = document.getElementById("sport");
@@ -95,6 +96,8 @@
   const FOOTBALL_LEAGUES = [
     { id: "PL",  name: "Premier League (PL)" },
     { id: "ELC", name: "EFL Championship (ELC)" },
+    { id: "EL1", name: "EFL League One (EL1)" },
+    { id: "EL2", name: "EFL League Two (EL2)" },
     { id: "BL1", name: "Bundesliga (BL1)" },
     { id: "SA",  name: "Serie A (SA)" },
     { id: "PD",  name: "La Liga (PD)" },
@@ -103,10 +106,10 @@
   ];
 
   const F1_LEAGUES = [
-    { id: "4370", name: "Formula 1 (4370)" }
+    { id: "f1", name: "Formula 1 (Calendar/Results)" }
   ];
 
-  // ⭐ The important fix: only latest request can update UI
+  // Prevent mixing: only latest request updates UI
   let latestToken = 0;
   let activeAbort = null;
 
@@ -137,16 +140,6 @@
     }).format(d);
   }
 
-  function fmtUKFromDateTime(dateStr, timeStr){
-    const iso = timeStr ? `${dateStr}T${timeStr}` : `${dateStr}T00:00:00`;
-    const d = new Date(iso + "Z");
-    return new Intl.DateTimeFormat("en-GB", {
-      timeZone: "Europe/London",
-      weekday:"short", year:"numeric", month:"short", day:"2-digit",
-      hour:"2-digit", minute:"2-digit"
-    }).format(d);
-  }
-
   async function fetchJson(url, signal){
     const u = url + (url.includes("?") ? "&" : "?") + "_=" + Date.now();
     const res = await fetch(u, { cache:"no-store", signal });
@@ -158,19 +151,36 @@
     return data;
   }
 
+  // football-data.org via Worker
   function buildFootballUrl(compCode, view){
     const status = (view === "results") ? "FINISHED" : "SCHEDULED";
     const target = `https://api.football-data.org/v4/competitions/${encodeURIComponent(compCode)}/matches?status=${encodeURIComponent(status)}`;
     return `${API}/?url=${encodeURIComponent(target)}`;
   }
 
+  // F1 via Worker (Jolpica/Ergast-compatible)
   function buildF1Url(view){
-    const mode = (view === "results") ? "past" : "next";
-    return `${API}/v2/tsdb/events?league=4370&mode=${encodeURIComponent(mode)}`;
+    const v = (view === "results") ? "results" : "upcoming";
+    return `${API}/v2/f1?view=${encodeURIComponent(v)}`;
+  }
+
+  function buildSessionsMeta(r){
+    // r: Ergast race object
+    const parts = [];
+    const add = (label, obj) => {
+      if (!obj || !obj.date) return;
+      const iso = obj.time ? `${obj.date}T${obj.time}` : `${obj.date}T00:00:00Z`;
+      parts.push(`${label}: ${fmtUKFromISO(iso)}`);
+    };
+    add("FP1", r.FirstPractice);
+    add("FP2", r.SecondPractice);
+    add("FP3", r.ThirdPractice);
+    add("Quali", r.Qualifying);
+    add("Sprint", r.Sprint);
+    return parts.join(" • ");
   }
 
   async function loadData(){
-    // Cancel previous request (prevents “mixing”)
     if (activeAbort) activeAbort.abort();
     activeAbort = new AbortController();
 
@@ -191,10 +201,9 @@
 
     try {
       const data = await fetchJson(apiUrl, activeAbort.signal);
-
-      // Ignore stale responses
       if (token !== latestToken) return;
 
+      // ---- FOOTBALL ----
       if (sport === "football") {
         const matches = data.matches || [];
         title.textContent = data.competition?.name || "Football";
@@ -210,8 +219,14 @@
 
         rows.innerHTML = matches.map(m => `
           <tr>
-            <td><div class="teams">${fmtUKFromISO(m.utcDate)}</div><div class="meta">${m.matchday != null ? "MD "+m.matchday : ""}</div></td>
-            <td><div class="teams">${m.homeTeam?.name || "Home"} vs ${m.awayTeam?.name || "Away"}</div><div class="meta">${m.stage || ""}</div></td>
+            <td>
+              <div class="teams">${fmtUKFromISO(m.utcDate)}</div>
+              <div class="meta">${m.matchday != null ? "Matchday " + m.matchday : ""}</div>
+            </td>
+            <td>
+              <div class="teams">${m.homeTeam?.name || "Home"} vs ${m.awayTeam?.name || "Away"}</div>
+              <div class="meta">${m.stage || ""}</div>
+            </td>
             <td><span class="tag">${m.status || ""}</span></td>
           </tr>
         `).join("");
@@ -220,26 +235,53 @@
         return;
       }
 
+      // ---- F1 (Ergast/Jolpica) ----
       if (sport === "f1") {
-        const events = data.events || [];
+        const races = data?.MRData?.RaceTable?.Races || [];
         title.textContent = "Formula 1";
-        count.textContent = `${events.length} events`;
+        count.textContent = `${races.length} races`;
 
-        if (!events.length) {
-          resetTable("No F1 events returned.");
+        if (!races.length) {
+          // This is expected for RESULTS early in season
+          const msg = (view === "results")
+            ? "No finished race yet (results not available). Try Upcoming."
+            : "No upcoming race returned.";
+          resetTable(msg);
           setState("Updated");
           return;
         }
 
-        events.sort((a,b) => ((a.dateEvent||"")+(a.strTime||"")).localeCompare((b.dateEvent||"")+(b.strTime||"")));
+        races.sort((a,b) => (a.date||"").localeCompare(b.date||""));
 
-        rows.innerHTML = events.map(ev => `
-          <tr>
-            <td><div class="teams">${fmtUKFromDateTime(ev.dateEvent, ev.strTime)}</div><div class="meta">${ev.dateEvent || ""}</div></td>
-            <td><div class="teams">${ev.strEvent || "Race"}</div><div class="meta">${ev.strVenue || ev.strCountry || ""}</div></td>
-            <td><span class="tag">${ev.strStatus || "—"}</span></td>
-          </tr>
-        `).join("");
+        rows.innerHTML = races.map(r => {
+          const isoRace = (r.date && r.time) ? `${r.date}T${r.time}` : (r.date ? `${r.date}T00:00:00Z` : "");
+          const when = isoRace ? fmtUKFromISO(isoRace) : (r.date || "-");
+
+          const circuit = r.Circuit?.circuitName || "";
+          const loc = r.Circuit?.Location;
+          const place = loc ? `${loc.locality || ""}${loc.country ? (loc.locality ? ", " : "") + loc.country : ""}` : "";
+          const venue = [circuit, place].filter(Boolean).join(" — ");
+
+          const eventName = `${r.raceName || "Grand Prix"} (Round ${r.round || "-"})`;
+
+          const status = (view === "results") ? "Finished" : "Scheduled";
+
+          const sessions = (view === "upcoming") ? buildSessionsMeta(r) : "";
+
+          return `
+            <tr>
+              <td>
+                <div class="teams">${when}</div>
+                <div class="meta">${r.date || ""}</div>
+              </td>
+              <td>
+                <div class="teams">${eventName}</div>
+                <div class="meta">${venue}${sessions ? "<br>" + sessions : ""}</div>
+              </td>
+              <td><span class="tag">${status}</span></td>
+            </tr>
+          `;
+        }).join("");
 
         setState("Updated");
         return;
@@ -255,7 +297,6 @@
   }
 
   async function onSportChange(){
-    // Invalidate anything in-flight & clear
     latestToken++;
     if (activeAbort) activeAbort.abort();
 
@@ -265,7 +306,6 @@
     if (sportSel.value === "football") fillLeagues(FOOTBALL_LEAGUES);
     else fillLeagues(F1_LEAGUES);
 
-    // Do NOT auto-load twice; we only load once
     await loadData();
   }
 
