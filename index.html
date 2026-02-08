@@ -37,7 +37,7 @@
     .controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
     .toggle{display:flex;align-items:center;gap:8px;color:var(--muted);font-size:13px}
     .toggle input{transform:translateY(1px)}
-    .small{font-size:12px;color:var(--muted)}
+    .small{font-size:12px;color:var(--muted);margin-top:6px}
   </style>
 </head>
 <body>
@@ -47,16 +47,13 @@
     <div class="sub">Live fixtures + results • GitHub Pages frontend • Cloudflare Worker API</div>
 
     <div class="bar">
-      <!-- 1st dropdown: Category -->
       <select id="category">
         <option value="football" selected>Football</option>
         <option value="motorsport">Motorsport</option>
       </select>
 
-      <!-- 2nd dropdown: Sub-category (League/Series) -->
       <select id="sub"></select>
 
-      <!-- 3rd dropdown: View -->
       <select id="view"></select>
 
       <button id="load">Load</button>
@@ -75,6 +72,7 @@
 
       <span id="state" class="pill">Ready</span>
     </div>
+
     <div class="small" id="hint"></div>
   </div>
 </header>
@@ -102,7 +100,6 @@
 </div>
 
 <script>
-  // ✅ Your Worker base URL
   const API = "https://football-api.aollaku.workers.dev";
 
   const categorySel = document.getElementById("category");
@@ -122,9 +119,7 @@
   const col2 = document.getElementById("col2");
   const col3 = document.getElementById("col3");
 
-  // -------------------------
-  // Sub-category lists
-  // -------------------------
+  // Football competitions (football-data codes)
   const FOOTBALL_SUBS = [
     { id: "PL",  name: "Premier League (PL)" },
     { id: "ELC", name: "EFL Championship (ELC)" },
@@ -137,12 +132,14 @@
     { id: "CL",  name: "UEFA Champions League (CL)" }
   ];
 
+  // Motorsport subcategory values MUST be ids: f1 | fe | motogp | wec
   const MOTORSPORT_SUBS = [
-    { id: "f1", name: "Formula 1" },
-    { id: "fe", name: "Formula E" }
+    { id: "f1",     name: "Formula 1" },
+    { id: "fe",     name: "Formula E" },
+    { id: "motogp", name: "MotoGP" },
+    { id: "wec",    name: "WEC (Endurance)" }
   ];
 
-  // Views by category/sub-category
   const FOOTBALL_VIEWS = [
     { id: "live",     name: "Live now" },
     { id: "upcoming", name: "Upcoming" },
@@ -157,7 +154,7 @@
     { id: "results",      name: "Last race results" }
   ];
 
-  const FE_VIEWS = [
+  const MOTORSPORT_VIEWS = [
     { id: "upcoming", name: "Upcoming" },
     { id: "results",  name: "Results (past)" }
   ];
@@ -210,9 +207,7 @@
     return data;
   }
 
-  // -------------------------
-  // Build API URLs
-  // -------------------------
+  // URL builders
   function buildFootballUrl(compCode, view){
     let statusParam;
     if (view === "results") statusParam = "FINISHED";
@@ -227,43 +222,25 @@
     return `${API}/v2/f1?view=${encodeURIComponent(view)}`;
   }
 
-  function buildFEUrl(view){
-    return `${API}/v2/fe?view=${encodeURIComponent(view)}`;
+  function buildMotorsportUrl(series, view){
+    // FE / MotoGP / WEC come from Worker: /v2/motorsport
+    return `${API}/v2/motorsport?series=${encodeURIComponent(series)}&view=${encodeURIComponent(view)}`;
   }
 
-  // -------------------------
-  // Render: Football
-  // -------------------------
-  function scoreText(m){
-    const ft = m?.score?.fullTime;
-    const ht = m?.score?.halfTime;
-
-    if (m.status === "FINISHED" && ft && (ft.home != null || ft.away != null)) {
-      return `<span class="score">${ft.home ?? "-"} - ${ft.away ?? "-"}</span>`;
-    }
-
-    // For LIVE some plans/providers still only fill fullTime at end,
-    // but we show what we get.
-    if ((m.status === "IN_PLAY" || m.status === "PAUSED") && ft && (ft.home != null || ft.away != null)) {
-      return `<span class="score">${ft.home ?? "-"} - ${ft.away ?? "-"}</span>`;
-    }
-
-    // If no score available yet
-    return `<span class="muted">vs</span>`;
-  }
-
-  function statusTag(m){
+  // Renderers (same as before, trimmed a bit)
+  function statusTagFootball(m){
     const s = m.status || "";
     if (s === "IN_PLAY" || s === "PAUSED") return `<span class="tag live">LIVE</span>`;
     if (s === "FINISHED") return `<span class="tag ft">FT</span>`;
     return `<span class="tag ns">${s || "—"}</span>`;
   }
 
-  function liveTimeText(m){
-    // football-data.org typically does not provide live minute.
-    if (m.status === "IN_PLAY") return "Live";
-    if (m.status === "PAUSED") return "HT";
-    return "";
+  function scoreTextFootball(m){
+    const ft = m?.score?.fullTime;
+    if ((m.status === "FINISHED" || m.status === "IN_PLAY" || m.status === "PAUSED") && ft && (ft.home != null || ft.away != null)) {
+      return `<span class="score">${ft.home ?? "-"} - ${ft.away ?? "-"}</span>`;
+    }
+    return `<span class="muted">vs</span>`;
   }
 
   function renderFootball(data, view){
@@ -282,40 +259,25 @@
 
     rows.innerHTML = matches.map(m => {
       const when = fmtUKFromISO(m.utcDate);
-      const liveTxt = liveTimeText(m);
       const md = (m.matchday != null) ? `Matchday ${m.matchday}` : "";
-
-      const ft = m?.score?.fullTime;
-      const ht = m?.score?.halfTime;
-
-      const resultLine = (m.status === "FINISHED" && (ft?.home != null || ft?.away != null))
-        ? `FT: ${ft.home ?? "-"}-${ft.away ?? "-"}${(ht?.home != null || ht?.away != null) ? ` • HT: ${ht.home ?? "-"}-${ht.away ?? "-"}` : ""}`
-        : "";
-
       return `
         <tr class="row-compact">
           <td class="kickoff">
             <div class="teams">${when}</div>
-            <div class="meta">${md}${resultLine ? `<br>${resultLine}` : ""}</div>
+            <div class="meta">${md}</div>
           </td>
           <td>
             <div class="teams">
-              ${m.homeTeam?.name || "Home"} ${scoreText(m)} ${m.awayTeam?.name || "Away"}
+              ${m.homeTeam?.name || "Home"} ${scoreTextFootball(m)} ${m.awayTeam?.name || "Away"}
             </div>
             <div class="meta">${m.stage || ""}</div>
           </td>
-          <td>
-            ${statusTag(m)}
-            ${liveTxt ? `<div class="meta">${liveTxt}</div>` : ""}
-          </td>
+          <td>${statusTagFootball(m)}</td>
         </tr>
       `;
     }).join("");
   }
 
-  // -------------------------
-  // Render: F1 (Jolpica Ergast)
-  // -------------------------
   function buildSessionsMeta(r){
     const parts = [];
     const add = (label, obj) => {
@@ -334,96 +296,65 @@
   function renderF1(data, view){
     if (view === "drivers" || view === "constructors") {
       setColumns("Pos", view === "drivers" ? "Driver / Team" : "Constructor", "Points");
-
       const lists = data?.MRData?.StandingsTable?.StandingsLists || [];
       const list0 = lists[0] || {};
+      const st = (view === "drivers") ? (list0?.DriverStandings || []) : (list0?.ConstructorStandings || []);
+      title.textContent = view === "drivers" ? "F1 Driver Standings" : "F1 Constructor Standings";
+      count.textContent = `${st.length} items`;
+      if (!st.length) return resetTable("No standings returned.");
 
-      if (view === "drivers") {
-        title.textContent = "F1 Driver Standings";
-        const st = list0?.DriverStandings || [];
-        count.textContent = `${st.length} drivers`;
-        if (!st.length) return resetTable("No driver standings returned.");
-
-        rows.innerHTML = st.map(s => {
+      rows.innerHTML = st.map(s => {
+        if (view === "drivers") {
           const drv = s.Driver ? `${s.Driver.givenName || ""} ${s.Driver.familyName || ""}`.trim() : "—";
           const team = s.Constructors?.[0]?.name || "";
           return `
             <tr>
               <td><div class="teams">${s.position || "-"}</div></td>
-              <td>
-                <div class="teams">${drv}</div>
-                <div class="meta">${team}</div>
-              </td>
+              <td><div class="teams">${drv}</div><div class="meta">${team}</div></td>
               <td><span class="tag">${s.points || "0"} pts</span></td>
             </tr>`;
-        }).join("");
-        return;
-      }
-
-      title.textContent = "F1 Constructor Standings";
-      const st = list0?.ConstructorStandings || [];
-      count.textContent = `${st.length} constructors`;
-      if (!st.length) return resetTable("No constructor standings returned.");
-
-      rows.innerHTML = st.map(s => `
-        <tr>
-          <td><div class="teams">${s.position || "-"}</div></td>
-          <td><div class="teams">${s.Constructor?.name || "—"}</div></td>
-          <td><span class="tag">${s.points || "0"} pts</span></td>
-        </tr>`).join("");
+        } else {
+          return `
+            <tr>
+              <td><div class="teams">${s.position || "-"}</div></td>
+              <td><div class="teams">${s.Constructor?.name || "—"}</div></td>
+              <td><span class="tag">${s.points || "0"} pts</span></td>
+            </tr>`;
+        }
+      }).join("");
       return;
     }
 
-    // upcoming/calendar/results (simple)
     setColumns("Date / Time (UK)", "Event", "Status");
     const races = data?.MRData?.RaceTable?.Races || [];
     title.textContent = "Formula 1";
     count.textContent = `${races.length} races`;
-
-    if (!races.length) {
-      return resetTable(view === "results" ? "No finished race yet." : "No races returned.");
-    }
+    if (!races.length) return resetTable(view === "results" ? "No finished race yet." : "No races returned.");
 
     races.sort((a,b) => (a.date||"").localeCompare(b.date||""));
-
     rows.innerHTML = races.map(r => {
       const isoRace = (r.date && r.time) ? `${r.date}T${r.time}` : `${r.date}T00:00:00Z`;
       const when = fmtUKFromISO(isoRace);
-
       const circuit = r.Circuit?.circuitName || "";
       const loc = r.Circuit?.Location;
       const place = loc ? `${loc.locality || ""}${loc.country ? (loc.locality ? ", " : "") + loc.country : ""}` : "";
       const venue = [circuit, place].filter(Boolean).join(" — ");
-
       const sessions = (view === "upcoming" || view === "calendar") ? buildSessionsMeta(r) : "";
-
       return `
         <tr class="row-compact">
-          <td class="kickoff">
-            <div class="teams">${when}</div>
-            <div class="meta">${r.date || ""}</div>
-          </td>
-          <td>
-            <div class="teams">${r.raceName || "Grand Prix"} (Round ${r.round || "-"})</div>
-            <div class="meta">${venue}${sessions ? "<br>" + sessions : ""}</div>
-          </td>
+          <td class="kickoff"><div class="teams">${when}</div><div class="meta">${r.date || ""}</div></td>
+          <td><div class="teams">${r.raceName || "Grand Prix"} (Round ${r.round || "-"})</div><div class="meta">${venue}${sessions ? "<br>"+sessions : ""}</div></td>
           <td><span class="tag">${view === "results" ? "Finished" : "Scheduled"}</span></td>
         </tr>`;
     }).join("");
   }
 
-  // -------------------------
-  // Render: Formula E (Worker /v2/fe normalized)
-  // -------------------------
-  function renderFE(data, view) {
+  function renderMotorsportSeries(data, view){
     setColumns("Date / Time (UK)", "Event", "Status");
     const events = data.events || [];
-    title.textContent = "Formula E";
+    title.textContent = data.league?.name || "Motorsport";
     count.textContent = `${events.length} events`;
-
-    if (!events.length) {
-      return resetTable("No Formula E events returned.");
-    }
+    if (!events.length) return resetTable("No events returned.");
 
     events.sort((a,b) => (a.startTimeUtc || "").localeCompare(b.startTimeUtc || ""));
     if (view === "results") events.reverse();
@@ -431,61 +362,39 @@
     rows.innerHTML = events.map(e => {
       const when = e.startTimeUtc ? fmtUKFromISO(e.startTimeUtc) : "—";
       const venueLine = [e.venue, e.location].filter(Boolean).join(" — ");
-      const round = e.round ? `Round ${e.round}` : "";
-      const season = e.season ? `Season ${e.season}` : "";
-      const metaLine = [season, round].filter(Boolean).join(" • ");
-
+      const metaLine = [e.season ? `Season ${e.season}` : "", e.round ? `Round ${e.round}` : ""].filter(Boolean).join(" • ");
       return `
         <tr class="row-compact">
-          <td class="kickoff">
-            <div class="teams">${when}</div>
-            <div class="meta">${metaLine}</div>
-          </td>
-          <td>
-            <div class="teams">${e.name || "Formula E Event"}</div>
-            <div class="meta">${venueLine || ""}</div>
-          </td>
+          <td class="kickoff"><div class="teams">${when}</div><div class="meta">${metaLine}</div></td>
+          <td><div class="teams">${e.name || "Event"}</div><div class="meta">${venueLine || ""}</div></td>
           <td><span class="tag">${e.status || (view === "results" ? "Finished" : "Scheduled")}</span></td>
-        </tr>
-      `;
+        </tr>`;
     }).join("");
   }
 
-  // -------------------------
-  // Auto-refresh
-  // -------------------------
+  // Auto refresh
   function startAutoRefresh(){
     stopAutoRefresh();
     if (!autoSel.checked) return;
-
     const seconds = parseInt(rateSel.value || "30", 10);
     refreshTimer = setInterval(() => loadData({ silent:true }), seconds * 1000);
   }
-
   function stopAutoRefresh(){
     if (refreshTimer) clearInterval(refreshTimer);
     refreshTimer = null;
   }
 
-  // -------------------------
-  // Main load function
-  // -------------------------
   async function loadData({ silent=false } = {}){
     if (activeAbort) activeAbort.abort();
     activeAbort = new AbortController();
-
     const token = ++latestToken;
 
-    const category = categorySel.value; // football | motorsport
-    const sub = subSel.value;           // PL/ELC... OR f1/fe
+    const category = categorySel.value;
+    const sub = subSel.value;
     const view = viewSel.value;
 
-    if (!silent) {
-      resetTable("Loading…");
-      setState("Loading…");
-    } else {
-      setState("Updating…");
-    }
+    if (!silent) { resetTable("Loading…"); setState("Loading…"); }
+    else setState("Updating…");
 
     let apiUrl = "";
 
@@ -493,7 +402,14 @@
       apiUrl = buildFootballUrl(sub, view);
     } else if (category === "motorsport") {
       if (sub === "f1") apiUrl = buildF1Url(view);
-      if (sub === "fe") apiUrl = buildFEUrl(view);
+      else apiUrl = buildMotorsportSeriesUrl(sub, view);
+    }
+
+    // Safety: prevent calling "/" which causes Missing 'url'
+    if (!apiUrl) {
+      rows.innerHTML = `<tr><td colspan="3" class="meta errorline">Error: internal URL builder failed (category=${category}, sub=${sub}, view=${view})</td></tr>`;
+      setState("Error", "err");
+      return;
     }
 
     try {
@@ -502,11 +418,10 @@
 
       if (category === "football") {
         renderFootball(data, view);
-        if (view === "live") setState("Live", "live");
-        else setState("Updated", "ok");
-      } else if (category === "motorsport") {
+        setState(view === "live" ? "Live" : "Updated", view === "live" ? "live" : "ok");
+      } else {
         if (sub === "f1") renderF1(data, view);
-        if (sub === "fe") renderFE(data, view);
+        else renderMotorsportSeries(data, view);
         setState("Updated", "ok");
       }
 
@@ -522,16 +437,17 @@
     }
   }
 
-  // -------------------------
-  // Handle dropdown dependencies
-  // -------------------------
-  function updateSecondAndThirdDropdowns() {
+  // NOTE: separate function so we never accidentally hit "/"
+  function buildMotorsportSeriesUrl(series, view){
+    return `${API}/v2/motorsport?series=${encodeURIComponent(series)}&view=${encodeURIComponent(view)}`;
+  }
+
+  function updateDropdowns(){
     const category = categorySel.value;
 
     if (category === "football") {
       fillSelect(subSel, FOOTBALL_SUBS);
       fillSelect(viewSel, FOOTBALL_VIEWS);
-      setColumns("Date / Time (UK)", "Match", "Status");
       hint.textContent = "Football uses football-data.org via your Worker.";
       return;
     }
@@ -539,51 +455,35 @@
     // Motorsport
     fillSelect(subSel, MOTORSPORT_SUBS);
 
-    // Default to F1 views initially
-    const sub = subSel.value || "f1";
-    if (sub === "f1") {
+    if (subSel.value === "f1") {
       fillSelect(viewSel, F1_VIEWS);
       hint.textContent = "F1 uses Jolpica (Ergast-compatible) via your Worker.";
     } else {
-      fillSelect(viewSel, FE_VIEWS);
-      hint.textContent = "Formula E uses TheSportsDB via your Worker (/v2/fe).";
+      fillSelect(viewSel, MOTORSPORT_VIEWS);
+      hint.textContent = "Formula E / MotoGP / WEC use TheSportsDB via your Worker (/v2/motorsport).";
     }
-
-    setColumns("Date / Time (UK)", "Event", "Status");
   }
 
-  function onCategoryChange(){
-    latestToken++;
-    if (activeAbort) activeAbort.abort();
+  categorySel.addEventListener("change", () => { stopAutoRefresh(); updateDropdowns(); loadData(); });
+
+  subSel.addEventListener("change", () => {
     stopAutoRefresh();
-    setState("Ready");
-
-    updateSecondAndThirdDropdowns();
-    loadData();
-  }
-
-  function onSubChange(){
-    // When Motorsport sub changes, change views list accordingly
     if (categorySel.value === "motorsport") {
       if (subSel.value === "f1") fillSelect(viewSel, F1_VIEWS);
-      else fillSelect(viewSel, FE_VIEWS);
+      else fillSelect(viewSel, MOTORSPORT_VIEWS);
     }
+    updateDropdowns(); // updates hint correctly
     loadData();
-  }
+  });
 
-  categorySel.addEventListener("change", onCategoryChange);
-  subSel.addEventListener("change", onSubChange);
   viewSel.addEventListener("change", () => loadData());
   btn.addEventListener("click", () => loadData());
-
   autoSel.addEventListener("change", startAutoRefresh);
   rateSel.addEventListener("change", startAutoRefresh);
 
   // Init
-  (async () => {
-    updateSecondAndThirdDropdowns();
-    await loadData();
-  })();
+  updateDropdowns();
+  loadData();
 </script>
 </body>
 </html>
