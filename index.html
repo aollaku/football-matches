@@ -32,27 +32,31 @@
     .tag.ns{border-color:#223040;color:var(--muted)}
     .score{font-weight:750}
     .kickoff{white-space:nowrap}
-    .muted{color:var(--muted)}
+    .errorline{color:#ffb0b0}
     .row-compact td{padding-top:12px;padding-bottom:12px}
     .controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
     .toggle{display:flex;align-items:center;gap:8px;color:var(--muted);font-size:13px}
     .toggle input{transform:translateY(1px)}
+    .small{font-size:12px;color:var(--muted)}
   </style>
 </head>
 <body>
 <header>
   <div class="wrap">
     <h1>TechApex Sports Fixtures</h1>
-    <div class="sub">TechApex Sports Fixtures. Welcome to the website.</div>
+    <div class="sub">Live fixtures + results • GitHub Pages frontend • Cloudflare Worker API</div>
 
     <div class="bar">
-      <select id="sport">
+      <!-- 1st dropdown: Category -->
+      <select id="category">
         <option value="football" selected>Football</option>
-        <option value="f1">F1 (Formula 1)</option>
+        <option value="motorsport">Motorsport</option>
       </select>
 
-      <select id="league"></select>
+      <!-- 2nd dropdown: Sub-category (League/Series) -->
+      <select id="sub"></select>
 
+      <!-- 3rd dropdown: View -->
       <select id="view"></select>
 
       <button id="load">Load</button>
@@ -62,7 +66,7 @@
           <input type="checkbox" id="autorefresh" checked />
           Auto refresh
         </label>
-        <select id="refreshRate">
+        <select id="refreshRate" title="Refresh interval">
           <option value="15">15s</option>
           <option value="30" selected>30s</option>
           <option value="60">60s</option>
@@ -71,6 +75,7 @@
 
       <span id="state" class="pill">Ready</span>
     </div>
+    <div class="small" id="hint"></div>
   </div>
 </header>
 
@@ -86,28 +91,29 @@
         <tr>
           <th id="col1" style="width:260px;">Date / Time (UK)</th>
           <th id="col2">Event</th>
-          <th id="col3" style="width:160px;">Status</th>
+          <th id="col3" style="width:180px;">Status</th>
         </tr>
       </thead>
       <tbody id="rows">
-        <tr><td colspan="3" class="meta">Choose a sport and press Load.</td></tr>
+        <tr><td colspan="3" class="meta">Choose a category and press Load.</td></tr>
       </tbody>
     </table>
   </div>
 </div>
 
 <script>
+  // ✅ Your Worker base URL
   const API = "https://football-api.aollaku.workers.dev";
 
-  const sportSel = document.getElementById("sport");
-  const leagueSel = document.getElementById("league");
-  const viewSel  = document.getElementById("view");
-  const btn      = document.getElementById("load");
-
-  const autoSel  = document.getElementById("autorefresh");
-  const rateSel  = document.getElementById("refreshRate");
+  const categorySel = document.getElementById("category");
+  const subSel = document.getElementById("sub");
+  const viewSel = document.getElementById("view");
+  const btn = document.getElementById("load");
+  const autoSel = document.getElementById("autorefresh");
+  const rateSel = document.getElementById("refreshRate");
 
   const state = document.getElementById("state");
+  const hint = document.getElementById("hint");
   const title = document.getElementById("title");
   const count = document.getElementById("count");
   const rows = document.getElementById("rows");
@@ -116,7 +122,10 @@
   const col2 = document.getElementById("col2");
   const col3 = document.getElementById("col3");
 
-  const FOOTBALL_LEAGUES = [
+  // -------------------------
+  // Sub-category lists
+  // -------------------------
+  const FOOTBALL_SUBS = [
     { id: "PL",  name: "Premier League (PL)" },
     { id: "ELC", name: "EFL Championship (ELC)" },
     { id: "EL1", name: "EFL League One (EL1)" },
@@ -128,20 +137,29 @@
     { id: "CL",  name: "UEFA Champions League (CL)" }
   ];
 
-  // ✅ new: Live + Upcoming + Past results
+  const MOTORSPORT_SUBS = [
+    { id: "f1", name: "Formula 1" },
+    { id: "fe", name: "Formula E" }
+  ];
+
+  // Views by category/sub-category
   const FOOTBALL_VIEWS = [
     { id: "live",     name: "Live now" },
     { id: "upcoming", name: "Upcoming" },
     { id: "results",  name: "Results (past)" }
   ];
 
-  const F1_LEAGUES = [{ id: "f1", name: "Formula 1" }];
   const F1_VIEWS = [
     { id: "upcoming",     name: "Next race" },
     { id: "calendar",     name: "Full season calendar" },
     { id: "drivers",      name: "Driver standings" },
     { id: "constructors", name: "Constructor standings" },
     { id: "results",      name: "Last race results" }
+  ];
+
+  const FE_VIEWS = [
+    { id: "upcoming", name: "Upcoming" },
+    { id: "results",  name: "Results (past)" }
   ];
 
   let latestToken = 0;
@@ -192,10 +210,10 @@
     return data;
   }
 
-  // football-data.org via Worker
+  // -------------------------
+  // Build API URLs
+  // -------------------------
   function buildFootballUrl(compCode, view){
-    // football-data.org uses status filters. Live isn't perfectly standard across providers,
-    // so we request multiple statuses when in "live" view.
     let statusParam;
     if (view === "results") statusParam = "FINISHED";
     else if (view === "live") statusParam = "IN_PLAY,PAUSED";
@@ -205,31 +223,32 @@
     return `${API}/?url=${encodeURIComponent(target)}`;
   }
 
-  // F1 via Worker
   function buildF1Url(view){
     return `${API}/v2/f1?view=${encodeURIComponent(view)}`;
   }
 
+  function buildFEUrl(view){
+    return `${API}/v2/fe?view=${encodeURIComponent(view)}`;
+  }
+
+  // -------------------------
+  // Render: Football
+  // -------------------------
   function scoreText(m){
-    // football-data shape: score.fullTime.home/away etc
     const ft = m?.score?.fullTime;
     const ht = m?.score?.halfTime;
-    const cur = m?.score?.regularTime; // sometimes used
-    const home = m?.homeTeam?.name || "Home";
-    const away = m?.awayTeam?.name || "Away";
 
-    // Prefer FT if finished
     if (m.status === "FINISHED" && ft && (ft.home != null || ft.away != null)) {
       return `<span class="score">${ft.home ?? "-"} - ${ft.away ?? "-"}</span>`;
     }
 
-    // For live, show current known score (some APIs only provide fullTime at end)
-    const liveScore = m?.score?.fullTime;
-    if ((m.status === "IN_PLAY" || m.status === "PAUSED") && liveScore && (liveScore.home != null || liveScore.away != null)) {
-      return `<span class="score">${liveScore.home ?? "-"} - ${liveScore.away ?? "-"}</span>`;
+    // For LIVE some plans/providers still only fill fullTime at end,
+    // but we show what we get.
+    if ((m.status === "IN_PLAY" || m.status === "PAUSED") && ft && (ft.home != null || ft.away != null)) {
+      return `<span class="score">${ft.home ?? "-"} - ${ft.away ?? "-"}</span>`;
     }
 
-    // Fallback: no score
+    // If no score available yet
     return `<span class="muted">vs</span>`;
   }
 
@@ -241,8 +260,7 @@
   }
 
   function liveTimeText(m){
-    // football-data.org usually does NOT provide minute. If it did, it would be here.
-    // We only show "LIVE" and optionally the score.
+    // football-data.org typically does not provide live minute.
     if (m.status === "IN_PLAY") return "Live";
     if (m.status === "PAUSED") return "HT";
     return "";
@@ -250,7 +268,6 @@
 
   function renderFootball(data, view){
     setColumns("Date / Time (UK)", "Match", "Status");
-
     const matches = data.matches || [];
     title.textContent = data.competition?.name || "Football";
     count.textContent = `${matches.length} matches`;
@@ -260,7 +277,6 @@
       return;
     }
 
-    // Sort: upcoming by time, results by time desc
     matches.sort((a,b) => (a.utcDate||"").localeCompare(b.utcDate||""));
     if (view === "results") matches.reverse();
 
@@ -272,7 +288,6 @@
       const ft = m?.score?.fullTime;
       const ht = m?.score?.halfTime;
 
-      // small extra line for results
       const resultLine = (m.status === "FINISHED" && (ft?.home != null || ft?.away != null))
         ? `FT: ${ft.home ?? "-"}-${ft.away ?? "-"}${(ht?.home != null || ht?.away != null) ? ` • HT: ${ht.home ?? "-"}-${ht.away ?? "-"}` : ""}`
         : "";
@@ -298,7 +313,9 @@
     }).join("");
   }
 
-  // --- F1 render (keep it as you already had) ---
+  // -------------------------
+  // Render: F1 (Jolpica Ergast)
+  // -------------------------
   function buildSessionsMeta(r){
     const parts = [];
     const add = (label, obj) => {
@@ -317,6 +334,7 @@
   function renderF1(data, view){
     if (view === "drivers" || view === "constructors") {
       setColumns("Pos", view === "drivers" ? "Driver / Team" : "Constructor", "Points");
+
       const lists = data?.MRData?.StandingsTable?.StandingsLists || [];
       const list0 = lists[0] || {};
 
@@ -380,8 +398,8 @@
       const sessions = (view === "upcoming" || view === "calendar") ? buildSessionsMeta(r) : "";
 
       return `
-        <tr>
-          <td>
+        <tr class="row-compact">
+          <td class="kickoff">
             <div class="teams">${when}</div>
             <div class="meta">${r.date || ""}</div>
           </td>
@@ -394,15 +412,54 @@
     }).join("");
   }
 
+  // -------------------------
+  // Render: Formula E (Worker /v2/fe normalized)
+  // -------------------------
+  function renderFE(data, view) {
+    setColumns("Date / Time (UK)", "Event", "Status");
+    const events = data.events || [];
+    title.textContent = "Formula E";
+    count.textContent = `${events.length} events`;
+
+    if (!events.length) {
+      return resetTable("No Formula E events returned.");
+    }
+
+    events.sort((a,b) => (a.startTimeUtc || "").localeCompare(b.startTimeUtc || ""));
+    if (view === "results") events.reverse();
+
+    rows.innerHTML = events.map(e => {
+      const when = e.startTimeUtc ? fmtUKFromISO(e.startTimeUtc) : "—";
+      const venueLine = [e.venue, e.location].filter(Boolean).join(" — ");
+      const round = e.round ? `Round ${e.round}` : "";
+      const season = e.season ? `Season ${e.season}` : "";
+      const metaLine = [season, round].filter(Boolean).join(" • ");
+
+      return `
+        <tr class="row-compact">
+          <td class="kickoff">
+            <div class="teams">${when}</div>
+            <div class="meta">${metaLine}</div>
+          </td>
+          <td>
+            <div class="teams">${e.name || "Formula E Event"}</div>
+            <div class="meta">${venueLine || ""}</div>
+          </td>
+          <td><span class="tag">${e.status || (view === "results" ? "Finished" : "Scheduled")}</span></td>
+        </tr>
+      `;
+    }).join("");
+  }
+
+  // -------------------------
+  // Auto-refresh
+  // -------------------------
   function startAutoRefresh(){
     stopAutoRefresh();
     if (!autoSel.checked) return;
 
     const seconds = parseInt(rateSel.value || "30", 10);
-    // Only auto refresh Football Live / Football Upcoming / Results (and F1 next race).
-    refreshTimer = setInterval(() => {
-      loadData({ silent:true });
-    }, seconds * 1000);
+    refreshTimer = setInterval(() => loadData({ silent:true }), seconds * 1000);
   }
 
   function stopAutoRefresh(){
@@ -410,14 +467,17 @@
     refreshTimer = null;
   }
 
+  // -------------------------
+  // Main load function
+  // -------------------------
   async function loadData({ silent=false } = {}){
     if (activeAbort) activeAbort.abort();
     activeAbort = new AbortController();
 
     const token = ++latestToken;
 
-    const sport = sportSel.value;
-    const league = leagueSel.value;
+    const category = categorySel.value; // football | motorsport
+    const sub = subSel.value;           // PL/ELC... OR f1/fe
     const view = viewSel.value;
 
     if (!silent) {
@@ -428,20 +488,25 @@
     }
 
     let apiUrl = "";
-    if (sport === "football") apiUrl = buildFootballUrl(league, view);
-    if (sport === "f1") apiUrl = buildF1Url(view);
+
+    if (category === "football") {
+      apiUrl = buildFootballUrl(sub, view);
+    } else if (category === "motorsport") {
+      if (sub === "f1") apiUrl = buildF1Url(view);
+      if (sub === "fe") apiUrl = buildFEUrl(view);
+    }
 
     try {
       const data = await fetchJson(apiUrl, activeAbort.signal);
       if (token !== latestToken) return;
 
-      if (sport === "football") {
+      if (category === "football") {
         renderFootball(data, view);
-        // show LIVE pill if in live view
         if (view === "live") setState("Live", "live");
         else setState("Updated", "ok");
-      } else {
-        renderF1(data, view);
+      } else if (category === "motorsport") {
+        if (sub === "f1") renderF1(data, view);
+        if (sub === "fe") renderFE(data, view);
         setState("Updated", "ok");
       }
 
@@ -457,40 +522,68 @@
     }
   }
 
-  async function onSportChange(){
+  // -------------------------
+  // Handle dropdown dependencies
+  // -------------------------
+  function updateSecondAndThirdDropdowns() {
+    const category = categorySel.value;
+
+    if (category === "football") {
+      fillSelect(subSel, FOOTBALL_SUBS);
+      fillSelect(viewSel, FOOTBALL_VIEWS);
+      setColumns("Date / Time (UK)", "Match", "Status");
+      hint.textContent = "Football uses football-data.org via your Worker.";
+      return;
+    }
+
+    // Motorsport
+    fillSelect(subSel, MOTORSPORT_SUBS);
+
+    // Default to F1 views initially
+    const sub = subSel.value || "f1";
+    if (sub === "f1") {
+      fillSelect(viewSel, F1_VIEWS);
+      hint.textContent = "F1 uses Jolpica (Ergast-compatible) via your Worker.";
+    } else {
+      fillSelect(viewSel, FE_VIEWS);
+      hint.textContent = "Formula E uses TheSportsDB via your Worker (/v2/fe).";
+    }
+
+    setColumns("Date / Time (UK)", "Event", "Status");
+  }
+
+  function onCategoryChange(){
     latestToken++;
     if (activeAbort) activeAbort.abort();
     stopAutoRefresh();
-
     setState("Ready");
-    if (sportSel.value === "football") {
-      fillSelect(leagueSel, FOOTBALL_LEAGUES);
-      fillSelect(viewSel, FOOTBALL_VIEWS);
-      setColumns("Date / Time (UK)", "Match", "Status");
-    } else {
-      fillSelect(leagueSel, F1_LEAGUES);
-      fillSelect(viewSel, F1_VIEWS);
-      setColumns("Date / Time (UK)", "Event", "Status");
-    }
 
-    await loadData();
+    updateSecondAndThirdDropdowns();
+    loadData();
   }
 
-  sportSel.addEventListener("change", onSportChange);
-  leagueSel.addEventListener("change", () => loadData());
+  function onSubChange(){
+    // When Motorsport sub changes, change views list accordingly
+    if (categorySel.value === "motorsport") {
+      if (subSel.value === "f1") fillSelect(viewSel, F1_VIEWS);
+      else fillSelect(viewSel, FE_VIEWS);
+    }
+    loadData();
+  }
+
+  categorySel.addEventListener("change", onCategoryChange);
+  subSel.addEventListener("change", onSubChange);
   viewSel.addEventListener("change", () => loadData());
   btn.addEventListener("click", () => loadData());
 
-  autoSel.addEventListener("change", () => startAutoRefresh());
-  rateSel.addEventListener("change", () => startAutoRefresh());
+  autoSel.addEventListener("change", startAutoRefresh);
+  rateSel.addEventListener("change", startAutoRefresh);
 
+  // Init
   (async () => {
-    fillSelect(leagueSel, FOOTBALL_LEAGUES);
-    fillSelect(viewSel, FOOTBALL_VIEWS);
-    setColumns("Date / Time (UK)", "Match", "Status");
+    updateSecondAndThirdDropdowns();
     await loadData();
   })();
 </script>
 </body>
 </html>
-
