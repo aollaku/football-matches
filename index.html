@@ -3,17 +3,17 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>TechApex Sports Fixtures</title>
+  <title>TechApex Fixtures</title>
   <style>
     :root{--bg:#0b0f14;--card:#121a23;--text:#e7eef7;--muted:#9fb0c3;--line:#223040;--good:#6ee7b7;--bad:#fb7185;}
     *{box-sizing:border-box}
     body{margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial;background:var(--bg);color:var(--text)}
     header{position:sticky;top:0;background:rgba(11,15,20,.92);backdrop-filter:blur(8px);border-bottom:1px solid var(--line);z-index:10}
-    .wrap{max-width:1100px;margin:0 auto;padding:16px}
+    .wrap{max-width:1150px;margin:0 auto;padding:16px}
     h1{margin:0;font-size:18px}
     .sub{color:var(--muted);font-size:13px;margin-top:6px}
     .bar{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-top:12px}
-    select,button{background:var(--card);color:var(--text);border:1px solid var(--line);border-radius:10px;padding:10px 12px;font-size:14px}
+    select,button,input{background:var(--card);color:var(--text);border:1px solid var(--line);border-radius:10px;padding:10px 12px;font-size:14px}
     button{cursor:pointer}
     .pill{font-size:12px;color:var(--muted);border:1px solid var(--line);padding:2px 8px;border-radius:999px}
     .pill.ok{color:var(--good);border-color:#0f3a2a}
@@ -26,33 +26,34 @@
     .teams{font-weight:650}
     .meta{font-size:12px;color:var(--muted);margin-top:2px;line-height:1.35}
     .errorline{color:#ffb0b0}
+    .small{font-size:12px;color:var(--muted)}
     .debug{font-family:ui-monospace,Consolas,monospace;font-size:12px;color:var(--muted);word-break:break-all}
   </style>
 </head>
 <body>
 <header>
   <div class="wrap">
-    <h1>TechApex Sports Fixtures</h1>
-    <div class="sub">GitHub Pages frontend • Cloudflare Worker API</div>
+    <h1>TechApex Fixtures</h1>
+    <div class="sub">Live fixtures + results • GitHub Pages frontend • Cloudflare Worker API</div>
 
     <div class="bar">
-      <select id="category">
-        <option value="football" selected>Football</option>
-        <option value="motorsport">Motorsport</option>
-      </select>
-
-      <select id="sub"></select>
-
+      <select id="sport"></select>
+      <select id="league"></select>
       <select id="view"></select>
-
       <button id="load">Load</button>
+
+      <label class="small"><input id="auto" type="checkbox" /> Auto refresh</label>
+      <select id="autoInt">
+        <option value="15">15s</option>
+        <option value="30" selected>30s</option>
+        <option value="60">60s</option>
+      </select>
 
       <span id="state" class="pill">Ready</span>
     </div>
 
-    <div class="meta">API base: <span class="debug" id="apiBase"></span></div>
-    <div class="meta">Last request: <span class="debug" id="lastUrl">—</span></div>
-    <div class="meta">Last status: <span class="debug" id="lastStatus">—</span></div>
+    <div class="small">Last request: <span class="debug" id="lastUrl">—</span></div>
+    <div class="small">Last status: <span class="debug" id="lastStatus">—</span></div>
   </div>
 </header>
 
@@ -67,85 +68,93 @@
         <tr>
           <th style="width:260px;">Date / Time (UK)</th>
           <th>Event</th>
-          <th style="width:180px;">Status</th>
+          <th style="width:200px;">Status / Score</th>
         </tr>
       </thead>
       <tbody id="rows">
-        <tr><td colspan="3" class="meta">Choose a category and press Load.</td></tr>
+        <tr><td colspan="3" class="meta">Pick a league and press Load.</td></tr>
       </tbody>
     </table>
   </div>
 </div>
 
 <script>
-  // IMPORTANT: keep this as workers.dev until your custom API domain is fully working
   const API = "https://football-api.aollaku.workers.dev";
 
-  const apiBaseEl = document.getElementById("apiBase");
-  const lastUrlEl = document.getElementById("lastUrl");
-  const lastStatusEl = document.getElementById("lastStatus");
-  apiBaseEl.textContent = API;
-
-  const categorySel = document.getElementById("category");
-  const subSel = document.getElementById("sub");
+  // ---- UI refs ----
+  const sportSel = document.getElementById("sport");
+  const leagueSel = document.getElementById("league");
   const viewSel = document.getElementById("view");
   const btn = document.getElementById("load");
-
   const state = document.getElementById("state");
-  const title = document.getElementById("title");
-  const count = document.getElementById("count");
-  const rows = document.getElementById("rows");
+  const lastUrlEl = document.getElementById("lastUrl");
+  const lastStatusEl = document.getElementById("lastStatus");
+  const titleEl = document.getElementById("title");
+  const countEl = document.getElementById("count");
+  const rowsEl = document.getElementById("rows");
+  const auto = document.getElementById("auto");
+  const autoInt = document.getElementById("autoInt");
 
-  const FOOTBALL_SUBS = [
-    { id:"PL", name:"Premier League (PL)" },
-    { id:"ELC", name:"EFL Championship (ELC)" },
-    { id:"EL1", name:"EFL League One (EL1)" },
-    { id:"EL2", name:"EFL League Two (EL2)" }
+  let timer = null;
+
+  // ---- Data model (Option B: football-data + F1 only) ----
+  const SPORTS = [
+    { id: "football", name: "Football" },
+    { id: "f1", name: "Motorsport (F1)" }
   ];
 
-  const MOTORSPORT_SUBS = [
-    { id:"f1", name:"Formula 1" },
-    { id:"fe", name:"Formula E" },
-    { id:"motogp", name:"MotoGP" },
-    { id:"wec", name:"WEC" }
+  // IMPORTANT: Some of these may 403 depending on your football-data.org plan.
+  const FOOTBALL_LEAGUES = [
+    { id: "PL",  name: "Premier League (PL)" },
+    { id: "CL",  name: "UEFA Champions League (CL)" },
+    { id: "PD",  name: "La Liga (PD)" },
+    { id: "SA",  name: "Serie A (SA)" },
+    { id: "BL1", name: "Bundesliga (BL1)" },
+    { id: "DED", name: "Eredivisie (DED)" },
+    { id: "PPL", name: "Primeira Liga (PPL)" },
+    { id: "EC",  name: "European Championship (EC)" },
+    // EFL codes are not always available on free plan; may 403:
+    { id: "ELC", name: "EFL Championship (ELC) ⚠ may 403" },
+    { id: "EL1", name: "EFL League One (EL1) ⚠ may 403" },
+    { id: "EL2", name: "EFL League Two (EL2) ⚠ may 403" }
   ];
 
   const FOOTBALL_VIEWS = [
-    { id:"live", name:"Live now" },
-    { id:"upcoming", name:"Upcoming" },
-    { id:"results", name:"Results (past)" }
+    { id: "upcoming", name: "Upcoming" },
+    { id: "live", name: "Live now" },
+    { id: "finished", name: "Finished (results)" }
   ];
 
   const F1_VIEWS = [
-    { id:"upcoming", name:"Next race" },
-    { id:"calendar", name:"Full calendar" },
-    { id:"drivers", name:"Driver standings" },
-    { id:"constructors", name:"Constructor standings" },
-    { id:"results", name:"Last race results" }
+    { id: "upcoming", name: "Next race" },
+    { id: "calendar", name: "Full calendar" },
+    { id: "results", name: "Last race results" },
+    { id: "drivers", name: "Driver standings" },
+    { id: "constructors", name: "Constructor standings" }
   ];
 
-  const MOTORSPORT_VIEWS = [
-    { id:"upcoming", name:"Upcoming" },
-    { id:"results", name:"Results (past)" }
-  ];
-
+  // ---- helpers ----
   function setState(text, kind="") {
     state.className = "pill" + (kind ? " " + kind : "");
     state.textContent = text;
   }
-
-  function fillSelect(sel, list){
+  function reset(msg) {
+    titleEl.textContent = "—";
+    countEl.textContent = "0 items";
+    rowsEl.innerHTML = `<tr><td colspan="3" class="meta">${msg}</td></tr>`;
+  }
+  function fillSelect(sel, list, keep=true) {
+    const prev = keep ? sel.value : "";
     sel.innerHTML = "";
-    for (const x of list){
+    list.forEach(x => {
       const o = document.createElement("option");
       o.value = x.id;
       o.textContent = x.name;
       sel.appendChild(o);
-    }
-    sel.selectedIndex = 0;
+    });
+    if (keep && list.some(x => x.id === prev)) sel.value = prev;
   }
-
-  function fmtUK(iso){
+  function fmtUK(iso) {
     const d = new Date(iso);
     return new Intl.DateTimeFormat("en-GB", {
       timeZone:"Europe/London",
@@ -153,137 +162,198 @@
       hour:"2-digit", minute:"2-digit"
     }).format(d);
   }
-
-  function reset(msg){
-    title.textContent = "—";
-    count.textContent = "0 items";
-    rows.innerHTML = `<tr><td colspan="3" class="meta">${msg}</td></tr>`;
-  }
-
-  async function fetchJson(url){
-    // cache-bust
+  async function fetchJson(url) {
     const u = url + (url.includes("?") ? "&" : "?") + "_=" + Date.now();
     lastUrlEl.textContent = u;
     lastStatusEl.textContent = "…";
-
     const res = await fetch(u, { mode:"cors", cache:"no-store" });
     lastStatusEl.textContent = `${res.status} ${res.statusText}`;
-
     const text = await res.text();
     let data;
     try { data = JSON.parse(text); }
-    catch { throw new Error("Bad JSON (or blocked by CORS/OPTIONS)"); }
-
-    if (!res.ok) throw new Error(data?.error || data?.message || `HTTP ${res.status}`);
+    catch { throw new Error("Bad JSON"); }
+    if (!res.ok) throw new Error(data?.message || data?.error || `HTTP ${res.status}`);
     return data;
   }
 
-  function buildFootballUrl(comp, view){
-    let status = "SCHEDULED";
-    if (view === "results") status = "FINISHED";
-    if (view === "live") status = "IN_PLAY,PAUSED";
-    const target = `https://api.football-data.org/v4/competitions/${encodeURIComponent(comp)}/matches?status=${encodeURIComponent(status)}`;
-    return `${API}/?url=${encodeURIComponent(target)}`;
+  function startTimer() {
+    stopTimer();
+    if (!auto.checked) return;
+    const sec = parseInt(autoInt.value, 10) || 30;
+    timer = setInterval(load, sec * 1000);
+  }
+  function stopTimer() {
+    if (timer) { clearInterval(timer); timer = null; }
   }
 
-  function buildF1Url(view){
-    return `${API}/v2/f1?view=${encodeURIComponent(view)}`;
-  }
+  // ---- renderers ----
+  function renderRows(items, titleText) {
+    titleEl.textContent = titleText;
+    countEl.textContent = `${items.length} items`;
 
-  function buildMotorsportUrl(series, view){
-    return `${API}/v2/motorsport?series=${encodeURIComponent(series)}&view=${encodeURIComponent(view)}`;
-  }
+    if (!items.length) {
+      rowsEl.innerHTML = `<tr><td colspan="3" class="meta">No items returned.</td></tr>`;
+      return;
+    }
 
-  function renderSimpleList(items, titleText){
-    title.textContent = titleText;
-    count.textContent = `${items.length} items`;
-    if (!items.length) return reset("No items returned.");
-    rows.innerHTML = items.map(it => `
+    rowsEl.innerHTML = items.map(it => `
       <tr>
         <td>${it.when || "—"}</td>
-        <td><div class="teams">${it.name || "—"}</div><div class="meta">${it.meta || ""}</div></td>
+        <td>
+          <div class="teams">${it.name || "—"}</div>
+          <div class="meta">${it.meta || ""}</div>
+        </td>
         <td>${it.status || "—"}</td>
       </tr>
     `).join("");
   }
 
-  async function load(){
+  // ---- loaders ----
+  async function loadFootball() {
+    const comp = leagueSel.value;
+    const view = viewSel.value;
+
+    const data = await fetchJson(`${API}/v1/football?comp=${encodeURIComponent(comp)}&view=${encodeURIComponent(view)}`);
+
+    const matches = Array.isArray(data?.matches) ? data.matches : [];
+    const titleText = leagueSel.options[leagueSel.selectedIndex]?.textContent || comp;
+
+    const items = matches.map(m => {
+      const iso = m.utcDate || null;
+      const home = m.homeTeam?.name || "Home";
+      const away = m.awayTeam?.name || "Away";
+      const status = m.status || "—";
+
+      const hs = m.score?.fullTime?.home ?? m.score?.halfTime?.home ?? null;
+      const as = m.score?.fullTime?.away ?? m.score?.halfTime?.away ?? null;
+      const hasScore = (hs != null && as != null);
+
+      // show score when live/finished
+      const statusText = hasScore ? `${status} (${hs}-${as})` : status;
+
+      const md = (m.matchday != null) ? `Matchday ${m.matchday}` : "";
+      const stage = m.stage ? String(m.stage) : "";
+      const meta = [md, stage].filter(Boolean).join(" • ");
+
+      return {
+        when: iso ? fmtUK(iso) : "—",
+        name: `${home} vs ${away}`,
+        meta,
+        status: statusText
+      };
+    });
+
+    renderRows(items, titleText);
+
+    // If 403 occurs, football-data returns JSON with message; fetchJson will throw.
+  }
+
+  async function loadF1() {
+    const view = viewSel.value;
+    const data = await fetchJson(`${API}/v1/f1?view=${encodeURIComponent(view)}`);
+
+    if (view === "drivers" || view === "constructors") {
+      // standings
+      const lists = data?.MRData?.StandingsTable?.StandingsLists || [];
+      const first = lists[0] || {};
+      const standings =
+        (view === "drivers")
+          ? (first.DriverStandings || [])
+          : (first.ConstructorStandings || []);
+
+      const items = standings.map((s, idx) => {
+        const pos = s.position || (idx + 1);
+        const pts = s.points || "0";
+        const wins = s.wins || "0";
+
+        const name =
+          view === "drivers"
+            ? `${s.Driver?.givenName || ""} ${s.Driver?.familyName || ""}`.trim()
+            : (s.Constructor?.name || "Constructor");
+
+        const meta =
+          view === "drivers"
+            ? (s.Constructors?.[0]?.name ? `Team: ${s.Constructors[0].name}` : "")
+            : (s.Constructor?.nationality ? `Nationality: ${s.Constructor.nationality}` : "");
+
+        return {
+          when: `#${pos}`,
+          name,
+          meta,
+          status: `${pts} pts • ${wins} wins`
+        };
+      });
+
+      renderRows(items, "Formula 1 Standings");
+      return;
+    }
+
+    const races = data?.MRData?.RaceTable?.Races || [];
+    const items = races.map(r => {
+      const iso = (r.date && r.time) ? `${r.date}T${r.time}` : (r.date ? `${r.date}T00:00:00Z` : null);
+      const circuit = r.Circuit?.circuitName || "";
+      const where = r.Circuit?.Location ? `${r.Circuit.Location.locality}, ${r.Circuit.Location.country}` : "";
+      const meta = [circuit, where].filter(Boolean).join(" — ");
+      return {
+        when: iso ? fmtUK(iso) : "—",
+        name: r.raceName || "Race",
+        meta,
+        status: (view === "results") ? "Finished" : "Scheduled"
+      };
+    });
+
+    renderRows(items, "Formula 1");
+  }
+
+  async function load() {
     try {
       setState("Loading…");
       reset("Loading…");
 
-      const cat = categorySel.value;
-      const sub = subSel.value;
-      const view = viewSel.value;
+      const sport = sportSel.value;
 
-      let data;
-
-      if (cat === "football") {
-        data = await fetchJson(buildFootballUrl(sub, view));
-        const matches = data.matches || [];
-        const items = matches.map(m => ({
-          when: m.utcDate ? fmtUK(m.utcDate) : "—",
-          name: `${m.homeTeam?.name || "Home"} vs ${m.awayTeam?.name || "Away"}`,
-          meta: m.stage || "",
-          status: m.status || ""
-        }));
-        renderSimpleList(items, data.competition?.name || "Football");
-      } else {
-        if (sub === "f1") {
-          data = await fetchJson(buildF1Url(view));
-          const races = data?.MRData?.RaceTable?.Races || [];
-          const items = races.map(r => {
-            const iso = (r.date && r.time) ? `${r.date}T${r.time}` : (r.date ? `${r.date}T00:00:00Z` : null);
-            return {
-              when: iso ? fmtUK(iso) : "—",
-              name: r.raceName || "Race",
-              meta: r.Circuit?.circuitName || "",
-              status: view === "results" ? "Finished" : "Scheduled"
-            };
-          });
-          renderSimpleList(items, "Formula 1");
-        } else {
-          data = await fetchJson(buildMotorsportUrl(sub, view));
-          const events = data.events || [];
-          const items = events.map(e => ({
-            when: e.startTimeUtc ? fmtUK(e.startTimeUtc) : "—",
-            name: e.name || "Event",
-            meta: [e.venue, e.location].filter(Boolean).join(" — "),
-            status: e.status || ""
-          }));
-          renderSimpleList(items, data.league?.name || "Motorsport");
-        }
-      }
+      if (sport === "football") await loadFootball();
+      else await loadF1();
 
       setState("Updated", "ok");
     } catch (e) {
       setState("Error", "err");
-      rows.innerHTML = `<tr><td colspan="3" class="meta errorline">Error: ${String(e.message || e)}</td></tr>`;
-      count.textContent = "0 items";
+      rowsEl.innerHTML = `<tr><td colspan="3" class="meta errorline">Error: ${String(e.message || e)}</td></tr>`;
+      countEl.textContent = "0 items";
     }
   }
 
-  function init(){
-    if (categorySel.value === "football") {
-      fillSelect(subSel, FOOTBALL_SUBS);
-      fillSelect(viewSel, FOOTBALL_VIEWS);
+  // ---- UI setup (NO RESETTING USER CHOICES) ----
+  function setupSportUI() {
+    const sport = sportSel.value;
+
+    if (sport === "football") {
+      fillSelect(leagueSel, FOOTBALL_LEAGUES, true);
+      fillSelect(viewSel, FOOTBALL_VIEWS, true);
     } else {
-      fillSelect(subSel, MOTORSPORT_SUBS);
-      fillSelect(viewSel, subSel.value === "f1" ? F1_VIEWS : MOTORSPORT_VIEWS);
+      // F1 has no league select (only one series)
+      fillSelect(leagueSel, [{ id:"f1", name:"Formula 1" }], false);
+      fillSelect(viewSel, F1_VIEWS, true);
+      leagueSel.value = "f1";
     }
   }
 
-  categorySel.addEventListener("change", () => { init(); load(); });
-  subSel.addEventListener("change", () => {
-    if (categorySel.value === "motorsport") {
-      fillSelect(viewSel, subSel.value === "f1" ? F1_VIEWS : MOTORSPORT_VIEWS);
-    }
-    load();
+  // ---- Events ----
+  sportSel.addEventListener("change", async () => {
+    setupSportUI();
+    await load();
+    startTimer();
   });
+  leagueSel.addEventListener("change", load);
   viewSel.addEventListener("change", load);
   btn.addEventListener("click", load);
+  auto.addEventListener("change", startTimer);
+  autoInt.addEventListener("change", startTimer);
 
-  init();
+  // ---- Init ----
+  fillSelect(sportSel, SPORTS, false);
+  sportSel.value = "football";
+  setupSportUI();
   load();
 </script>
 </body>
