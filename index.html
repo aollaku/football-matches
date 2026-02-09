@@ -6,74 +6,29 @@
   <title>TechApex Sports Fixtures</title>
   <style>
     :root { color-scheme: dark; }
-    body {
-      margin: 0;
-      font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
-      background: #0b0f14;
-      color: #e7eef7;
-    }
-    .wrap { max-width: 1100px; margin: 0 auto; padding: 28px 18px 60px; }
-    h1 { margin: 0 0 4px; font-size: 26px; }
-    .sub { opacity: .75; margin-bottom: 18px; }
-    .bar {
-      display: flex; gap: 10px; flex-wrap: wrap;
-      align-items: center;
-      padding: 14px;
-      border: 1px solid rgba(255,255,255,.08);
-      border-radius: 14px;
-      background: rgba(255,255,255,.03);
-    }
-    select, button {
-      background: rgba(255,255,255,.06);
-      color: #e7eef7;
-      border: 1px solid rgba(255,255,255,.12);
-      border-radius: 12px;
-      padding: 10px 12px;
-      font-size: 14px;
-      outline: none;
-    }
-    button { cursor: pointer; }
-    button:hover { background: rgba(255,255,255,.10); }
+    body { margin:0; font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif; background:#0b0f14; color:#e7eef7; }
+    .wrap { max-width:1100px; margin:0 auto; padding:28px 18px 60px; }
+    h1 { margin:0 0 4px; font-size:26px; }
+    .sub { opacity:.75; margin-bottom:18px; }
+    .bar { display:flex; gap:10px; flex-wrap:wrap; align-items:center; padding:14px; border:1px solid rgba(255,255,255,.08); border-radius:14px; background:rgba(255,255,255,.03); }
+    select, button { background:rgba(255,255,255,.06); color:#e7eef7; border:1px solid rgba(255,255,255,.12); border-radius:12px; padding:10px 12px; font-size:14px; outline:none; }
+    button { cursor:pointer; }
+    button:hover { background:rgba(255,255,255,.10); }
+    label { display:flex; align-items:center; gap:8px; padding:8px 10px; border:1px solid rgba(255,255,255,.12); border-radius:12px; background:rgba(255,255,255,.04); }
+    input[type="checkbox"] { transform: scale(1.1); }
 
-    .pill {
-      padding: 6px 10px; border-radius: 999px;
-      border: 1px solid rgba(255,255,255,.12);
-      background: rgba(255,255,255,.06);
-      font-size: 12px;
-      opacity: .85;
-    }
+    .pill { padding:6px 10px; border-radius:999px; border:1px solid rgba(255,255,255,.12); background:rgba(255,255,255,.06); font-size:12px; opacity:.85; }
     .pill.ok { border-color: rgba(0,255,160,.25); }
-    .pill.err { border-color: rgba(255,80,80,.35); color: #ffb3b3; }
+    .pill.err { border-color: rgba(255,80,80,.35); color:#ffb3b3; }
 
-    .card {
-      margin-top: 18px;
-      border: 1px solid rgba(255,255,255,.08);
-      border-radius: 14px;
-      overflow: hidden;
-      background: rgba(255,255,255,.03);
-    }
-    .cardHead {
-      display:flex; justify-content: space-between; align-items:center;
-      padding: 14px 14px;
-      border-bottom: 1px solid rgba(255,255,255,.08);
-      font-weight: 650;
-    }
-    table { width: 100%; border-collapse: collapse; }
-    th, td {
-      padding: 12px 14px;
-      border-bottom: 1px solid rgba(255,255,255,.06);
-      vertical-align: top;
-    }
-    th { text-align: left; font-size: 12px; opacity: .8; }
-    .muted { opacity: .75; font-size: 12px; margin-top: 2px; }
-    .status {
-      display:inline-block; padding: 4px 10px; border-radius: 999px;
-      background: rgba(255,255,255,.06);
-      border: 1px solid rgba(255,255,255,.10);
-      font-size: 12px;
-      white-space: nowrap;
-    }
-    .errorLine { color: #ffb3b3; padding: 12px 14px; }
+    .card { margin-top:18px; border:1px solid rgba(255,255,255,.08); border-radius:14px; overflow:hidden; background:rgba(255,255,255,.03); }
+    .cardHead { display:flex; justify-content:space-between; align-items:center; padding:14px; border-bottom:1px solid rgba(255,255,255,.08); font-weight:650; }
+    table { width:100%; border-collapse:collapse; }
+    th, td { padding:12px 14px; border-bottom:1px solid rgba(255,255,255,.06); vertical-align:top; }
+    th { text-align:left; font-size:12px; opacity:.8; }
+    .muted { opacity:.75; font-size:12px; margin-top:2px; }
+    .status { display:inline-block; padding:4px 10px; border-radius:999px; background:rgba(255,255,255,.06); border:1px solid rgba(255,255,255,.10); font-size:12px; white-space:nowrap; }
+    .errorLine { color:#ffb3b3; padding:12px 14px; }
   </style>
 </head>
 <body>
@@ -86,6 +41,20 @@
       <select id="league"></select>
       <select id="view"></select>
       <button id="load">Load</button>
+
+      <label title="Auto refresh results">
+        <input type="checkbox" id="autoRefresh" />
+        Auto refresh
+      </label>
+
+      <select id="refreshSec" title="Refresh interval (seconds)">
+        <option value="10">10s</option>
+        <option value="20">20s</option>
+        <option value="30" selected>30s</option>
+        <option value="60">60s</option>
+        <option value="120">120s</option>
+      </select>
+
       <span id="status" class="pill ok">Ready</span>
     </div>
 
@@ -98,9 +67,9 @@
       <table>
         <thead>
           <tr>
-            <th style="width: 220px;">Date / Time (UK)</th>
+            <th style="width:220px;">Date / Time (UK)</th>
             <th>Event</th>
-            <th style="width: 140px;">Status</th>
+            <th style="width:140px;">Status</th>
           </tr>
         </thead>
         <tbody id="rows">
@@ -114,7 +83,6 @@
 
 <script>
 (() => {
-  // IMPORTANT: set this to your Worker hostname (you’re using this already)
   const WORKER_BASE = "https://football-api.aollaku.workers.dev";
 
   const $sport = document.getElementById("sport");
@@ -127,13 +95,16 @@
   const $count = document.getElementById("countPill");
   const $err = document.getElementById("err");
 
+  const $auto = document.getElementById("autoRefresh");
+  const $sec = document.getElementById("refreshSec");
+
+  let refreshTimer = null;
+
   const SPORTS = [
     { id: "football", name: "Football" },
     { id: "motorsport", name: "Motorsport" },
   ];
 
-  // Football competitions (football-data.org codes)
-  // Keep these as you had them; add more as needed.
   const FOOTBALL_LEAGUES = [
     { id: "PL",  name: "Premier League (PL)" },
     { id: "ELC", name: "EFL Championship (ELC)" },
@@ -145,7 +116,6 @@
     { id: "PD",  name: "La Liga (PD)" },
   ];
 
-  // Motorsport series
   const MOTORSPORT_LEAGUES = [
     { id: "f1",     name: "Formula 1" },
     { id: "fe",     name: "Formula E" },
@@ -194,13 +164,12 @@
 
   function rebuildDropdowns() {
     const sport = $sport.value;
-
     if (sport === "football") {
-      fillSelect($league, FOOTBALL_LEAGUES, "PL");
-      fillSelect($view, FOOTBALL_VIEWS, "upcoming");
+      fillSelect($league, FOOTBALL_LEAGUES, $league.value || "PL");
+      fillSelect($view, FOOTBALL_VIEWS, $view.value || "upcoming");
     } else {
-      fillSelect($league, MOTORSPORT_LEAGUES, "f1");
-      fillSelect($view, MOTORSPORT_VIEWS, "next");
+      fillSelect($league, MOTORSPORT_LEAGUES, $league.value || "f1");
+      fillSelect($view, MOTORSPORT_VIEWS, $view.value || "next");
     }
   }
 
@@ -251,42 +220,26 @@
     }
   }
 
-  // ----------------- API builders -----------------
-
   function buildFootballUpstream(leagueCode, view) {
-    // football-data.org API
-    // status: SCHEDULED | LIVE | FINISHED
     let status = "SCHEDULED";
     if (view === "live") status = "LIVE";
     if (view === "finished") status = "FINISHED";
     return `https://api.football-data.org/v4/competitions/${leagueCode}/matches?status=${status}`;
   }
-
   function buildFootballWorkerUrl(upstreamUrl) {
     return `${WORKER_BASE}/?url=${encodeURIComponent(upstreamUrl)}`;
   }
 
   function buildF1Url(view) {
-    // maps UI views to Worker /v2/f1 view values
-    const map = {
-      next: "upcoming",
-      calendar: "calendar",
-      last: "results",
-      drivers: "drivers",
-      teams: "constructors",
-    };
+    const map = { next:"upcoming", calendar:"calendar", last:"results", drivers:"drivers", teams:"constructors" };
     const v = map[view] || "upcoming";
     return `${WORKER_BASE}/v2/f1?view=${encodeURIComponent(v)}`;
   }
 
   function buildMotorsportUrl(series, view) {
-    // our Worker /v2/motorsport endpoint (Wikipedia calendars)
-    // only supports next/calendar/last
     const safeView = (view === "next" || view === "calendar" || view === "last") ? view : "next";
     return `${WORKER_BASE}/v2/motorsport?series=${encodeURIComponent(series)}&view=${encodeURIComponent(safeView)}`;
   }
-
-  // ----------------- loaders -----------------
 
   async function loadData() {
     clearError();
@@ -303,18 +256,16 @@
         const upstream = buildFootballUpstream(league, view);
         url = buildFootballWorkerUrl(upstream);
         $title.textContent = FOOTBALL_LEAGUES.find(x=>x.id===league)?.name || "Football";
+
         const r = await fetch(url);
         const j = await r.json();
-
         if (!r.ok) throw new Error(j?.error || `HTTP ${r.status}`);
 
         const matches = (j?.matches || []).map(m => {
           const score =
             (m?.score?.fullTime?.home != null && m?.score?.fullTime?.away != null)
               ? `${m.score.fullTime.home}-${m.score.fullTime.away}`
-              : (m?.score?.halfTime?.home != null && m?.score?.halfTime?.away != null)
-                ? `${m.score.halfTime.home}-${m.score.halfTime.away} HT`
-                : "";
+              : "";
 
           return {
             utcDate: m.utcDate,
@@ -330,23 +281,19 @@
         $count.textContent = `${matches.length} items`;
         renderRows(matches, "football");
       } else {
-        // Motorsport
         const leagueName = MOTORSPORT_LEAGUES.find(x=>x.id===league)?.name || "Motorsport";
         $title.textContent = leagueName;
 
-        // F1 uses /v2/f1 for full feature set
         if (league === "f1") {
           url = buildF1Url(view);
           const r = await fetch(url);
           const j = await r.json();
           if (!r.ok) throw new Error(j?.error || `HTTP ${r.status}`);
 
-          // Normalize F1 shapes
           const MR = j?.MRData || {};
           const raceTable = MR?.RaceTable || {};
           const races = raceTable?.Races || [];
 
-          // standings
           const driverStandings = MR?.StandingsTable?.StandingsLists?.[0]?.DriverStandings;
           const constructorStandings = MR?.StandingsTable?.StandingsLists?.[0]?.ConstructorStandings;
 
@@ -382,9 +329,7 @@
           $count.textContent = `${items.length} items`;
           renderRows(items, "motorsport");
         } else {
-          // Other motorsport (free calendar views only)
           if (view === "drivers" || view === "teams") {
-            // Free sources don’t provide reliable standings for MotoGP/FE/WEC without paid feeds.
             $count.textContent = `0 items`;
             $rows.innerHTML = `<tr><td colspan="3" class="muted">
               Standings are only supported for Formula 1 (free Ergast/Jolpica).<br/>
@@ -418,6 +363,23 @@
     }
   }
 
+  function stopAuto() {
+    if (refreshTimer) {
+      clearInterval(refreshTimer);
+      refreshTimer = null;
+    }
+  }
+
+  function startAutoIfEnabled() {
+    stopAuto();
+    if (!$auto.checked) return;
+
+    const secs = parseInt($sec.value, 10) || 30;
+    refreshTimer = setInterval(() => {
+      loadData();
+    }, secs * 1000);
+  }
+
   // init
   fillSelect($sport, SPORTS, "football");
   rebuildDropdowns();
@@ -426,9 +388,26 @@
     rebuildDropdowns();
     clearError();
     setStatus("Ready", true);
+    startAutoIfEnabled();
+  });
+  $league.addEventListener("change", () => {
+    clearError();
+    setStatus("Ready", true);
+    startAutoIfEnabled();
+  });
+  $view.addEventListener("change", () => {
+    clearError();
+    setStatus("Ready", true);
+    startAutoIfEnabled();
   });
 
-  $load.addEventListener("click", loadData);
+  $auto.addEventListener("change", startAutoIfEnabled);
+  $sec.addEventListener("change", startAutoIfEnabled);
+
+  $load.addEventListener("click", () => {
+    loadData();
+    startAutoIfEnabled();
+  });
 })();
 </script>
 </body>
